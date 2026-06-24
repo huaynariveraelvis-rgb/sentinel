@@ -35,7 +35,7 @@ function applyThemeColors(c) {
 function cycleTheme() { themeIdx = (themeIdx + 1) % THEME_ORDER.length; applyThemeColors(THEMES[THEME_ORDER[themeIdx]]); }
 
 /* ---------- State ---------- */
-const CAPTION = { LISTENING:"ESCUCHANDO", THINKING:"PROCESANDO", SPEAKING:"HABLANDO", MUTED:"SILENCIADO" };
+const CAPTION = { LISTENING:"VIGILANDO", THINKING:"ANALIZANDO", SPEAKING:"INFORMANDO", MUTED:"EN PAUSA" };
 let muted = false;
 function setState(state) {
   if (window.Orb) window.Orb.setState(state);
@@ -76,7 +76,7 @@ function chatClose() {
   p.setAttribute("hidden", "");
   document.body.classList.remove("chat-on");
   document.body.classList.remove("controls-on");  // oculta barra + funciones → solo la bola
-  const inp = $("#textInput"); if (inp) inp.placeholder = "Mensaje para TWO TWENTY…";
+  const inp = $("#textInput"); if (inp) inp.placeholder = "Pregúntale a SENTINEL…";
 }
 function chatToggle() { chatIsOpen() ? chatClose() : chatOpen(); }
 function _chatClearEmpty() { const e = $("#chatEmpty"); if (e) e.remove(); }
@@ -94,7 +94,7 @@ function chatStartBot() {
   const log = $("#chatLog"); if (!log) return;
   _chatClearEmpty();
   chatBotEl = document.createElement("div"); chatBotEl.className = "msg bot";
-  chatBotEl.innerHTML = '<span class="who">TWO TWENTY</span><span class="body"></span>';
+  chatBotEl.innerHTML = '<span class="who">SENTINEL</span><span class="body"></span>';
   log.appendChild(chatBotEl); _chatScroll();
 }
 function chatUpdateBot(text) {
@@ -272,5 +272,5 @@ window.addEventListener("DOMContentLoaded", () => {
   setupBridge();
   setState("LISTENING");
   tickClock(); setInterval(tickClock, 1000);
-  if (!pyBridge) setResponse("TWO TWENTY en línea.");
+  if (!pyBridge) setResponse("SENTINEL en línea. Sistema protegido.");
 });
