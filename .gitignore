@@ -1,0 +1,33 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# --- Entorno virtual ---
+.venv/
+venv/
+
+# --- Secretos y config local (NUNCA al repo) ---
+config/settings.json
+config/license.key
+*.key
+
+# --- Estado de ejecucion / runtime (especifico de la maquina) ---
+sentinel.log
+sentinel.*.log
+logs/
+quarantine/
+config/scan_history.json
+config/user_state.json
+
+# --- Artefactos de build / previews ---
+build/
+dist/
+_ui_preview/
+*.spec
+
+# --- SO ---
+Thumbs.db
+desktop.ini
+.DS_Store

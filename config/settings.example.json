@@ -1,0 +1,23 @@
+{
+  "_comment": "Copia este archivo a settings.json y rellena tus valores. settings.json NUNCA se sube al repo.",
+  "product": "SENTINEL",
+  "vendor": "ELVIS SYSTEMS Industrias",
+  "theme": "guardian",
+  "scan": {
+    "auto_interval_seconds": 60,
+    "watch_processes": true,
+    "watch_network": true,
+    "watch_autoruns": true
+  },
+  "ai": {
+    "gemini_api_key": "",
+    "enabled": false
+  },
+  "analysis": {
+    "virustotal_api_key": ""
+  },
+  "voice": {
+    "enabled": false,
+    "alert_on_severity": "ALTA"
+  }
+}
