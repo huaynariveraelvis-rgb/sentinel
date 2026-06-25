@@ -129,6 +129,7 @@ function createOrb(canvas) {
 
   // ── Base state vars ──
   let state = "idle";
+  let threat = false;   // SENTINEL: orbe rojo cuando hay amenaza grave
   let targetRadius = 25, currentRadius = 25;
   let targetSpeed = 0.3, currentSpeed = 0.3;
   let targetBright = 0.6, currentBright = 0.6;
@@ -159,6 +160,7 @@ function createOrb(canvas) {
   const COL_SPEAK = new THREE.Color(0x37e0a0);
   const COL_BRIGHT = new THREE.Color(0xbfffe8);
   const COL_FLASH = new THREE.Color(0xffffff);
+  const COL_THREAT = new THREE.Color(0xff3355);  // rojo amenaza
   const _tmpColor = new THREE.Color();
   const _rainbowCol = new THREE.Color();
 
@@ -452,9 +454,17 @@ function createOrb(canvas) {
     } else {
       mat.opacity = currentBright + bass * 0.08;
       mat.size = currentSize + bass * 0.05;
-      if (state === "thinking") { mat.color.lerp(COL_THINK, 0.015); lineMat.color.lerp(COL_THINK, 0.015); }
-      else { mat.color.lerp(COL_BASE, 0.015); lineMat.color.lerp(COL_BASE, 0.015); }
-      electronMat.color.set(0xffffff);
+      if (threat) {
+        // pulso rojo de alarma sobre toda la constelacion
+        mat.color.lerp(COL_THREAT, 0.05); lineMat.color.lerp(COL_THREAT, 0.05);
+        electronMat.color.set(0xff5a78);
+      } else if (state === "thinking") {
+        mat.color.lerp(COL_THINK, 0.015); lineMat.color.lerp(COL_THINK, 0.015);
+        electronMat.color.set(0xffffff);
+      } else {
+        mat.color.lerp(COL_BASE, 0.015); lineMat.color.lerp(COL_BASE, 0.015);
+        electronMat.color.set(0xffffff);
+      }
     }
 
     if (demoActive) {
@@ -491,6 +501,7 @@ function createOrb(canvas) {
 
   return {
     setState(s) { state = s; },
+    setThreat(on) { threat = !!on; },
     setEyes(on) { targetEyes = on ? 1 : 0; },
     setLevel(v) { extLevel = Math.max(0, Math.min(1, v || 0)); },
     setAnalyser(an) { analyser = an; if (an) freqData = new Uint8Array(an.frequencyBinCount); },
@@ -508,8 +519,9 @@ function createOrb(canvas) {
   window.Orb = {
     init() { /* ya está corriendo */ },
     setState(s) { orb.setState(MAP[s] || "idle"); },
+    setThreat(on) { orb.setThreat(on); },
     setVolume(v) { orb.setLevel(v); },
-    setTheme() { /* mantiene su paleta nativa (azul constelación) */ },
+    setTheme() { /* paleta verde guardian nativa */ },
     setEyes(on) { orb.setEyes(on); },
     triggerDemo() { orb.triggerDemo(); },
   };

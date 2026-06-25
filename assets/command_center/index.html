@@ -269,6 +269,20 @@
       <div class="upload-sub">Arrastrá un archivo aquí o elegilo</div>
       <button class="upload-btn" id="uploadBtn">Elegir archivo</button>
     </div>
+
+    <!-- ===== Panel de VIGILANCIA EN VIVO (SENTINEL) ===== -->
+    <aside class="sentinel-panel" id="sentinelPanel">
+      <div class="sp-head">
+        <span class="sp-title"><span class="sp-pulse"></span>VIGILANCIA EN VIVO</span>
+        <button class="sp-rescan" id="spRescan" title="Re-escanear ahora">↻</button>
+      </div>
+      <div class="sp-scorebox">
+        <div class="sp-score" id="spScore">—</div>
+        <div class="sp-scorelbl">PUNTAJE DE SEGURIDAD</div>
+      </div>
+      <div class="sp-summary" id="spSummary">Iniciando barrido…</div>
+      <div class="sp-list" id="spList"></div>
+    </aside>
   </div>
 
   <!-- Provided by Qt when embedded; harmlessly 404s in a plain browser -->
@@ -276,6 +290,7 @@
   <script src="icons.js"></script>
   <script src="three.min.js"></script>
   <script src="orb_three.js"></script>
+  <script src="sentinel_panel.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

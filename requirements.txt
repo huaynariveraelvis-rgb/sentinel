@@ -1,10 +1,12 @@
 # SENTINEL — dependencias
-# Fase 0 (motor de vigilancia headless):
+
+# Motor de vigilancia (Fase 0):
 psutil>=7.0
 
-# Fase 1+ (GUI Command Center) — se activan al cablear la interfaz:
-# PyQt6>=6.6
-# PyQt6-WebEngine>=6.6
+# GUI Command Center (Fase 1):
+PyQt6>=6.6
+PyQt6-WebEngine>=6.6
+mss>=9.0
 
 # Fase 3+ (cerebro IA / voz):
 # google-genai>=0.3

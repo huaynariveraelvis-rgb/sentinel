@@ -18,7 +18,7 @@ para atacar equipos de terceros.
 | Fase | Entregable | Estado |
 |------|------------|--------|
 | **0** | Base + **motor de vigilancia headless** (procesos, red, arranque) | ✅ |
-| 1 | GUI Command Center reskineada + panel de vigilancia en vivo | ⏳ |
+| **1** | GUI Command Center + **panel de vigilancia en vivo** (orbe rojo ante amenaza, puntaje de seguridad) | ✅ |
 | 2 | Auditoría de hardening de Windows + puntaje de seguridad | ⏳ |
 | 3 | Detección inteligente + alertas por voz (Gemini) | ⏳ |
 | 4 | Análisis bajo demanda (archivos / URLs / hashes + cuarentena) | ⏳ |
@@ -42,13 +42,15 @@ de **solo lectura** de tu propia máquina:
 
 Cada hallazgo trae **severidad** (CRÍTICA → INFO), explicación y evidencia.
 
-## Probar el motor
+## Probar
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python -m sentinel.scan
+
+python -m sentinel        # GUI: Command Center + panel en vivo
+python -m sentinel.scan   # solo motor, reporte por consola
 ```
 
 Para ver **todas** las conexiones de red, ejecútalo como administrador.

@@ -108,7 +108,15 @@ function chatUpdateBot(text) {
 let pyBridge = null;
 function setupBridge() {
   if (typeof QWebChannel === "undefined" || !window.qt || !window.qt.webChannelTransport) return;
-  new QWebChannel(qt.webChannelTransport, (ch) => { pyBridge = ch.objects.pyBridge; if (pyBridge.request_theme) pyBridge.request_theme(); });
+  new QWebChannel(qt.webChannelTransport, (ch) => {
+    pyBridge = ch.objects.pyBridge;
+    if (pyBridge.request_theme) pyBridge.request_theme();
+    // SENTINEL: conectar la señal de vigilancia al panel en vivo
+    if (pyBridge.scan_result && window.SentinelPanel) {
+      pyBridge.scan_result.connect((json) => window.SentinelPanel.onScan(json));
+      window.SentinelPanel.setBridge(pyBridge);
+    }
+  });
 }
 
 /* ---------- Actions ---------- */
