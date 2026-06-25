@@ -18,11 +18,11 @@ para atacar equipos de terceros.
 | Fase | Entregable | Estado |
 |------|------------|--------|
 | **0** | Base + **motor de vigilancia headless** (procesos, red, arranque) | ✅ |
-| **1** | GUI Command Center + **panel de vigilancia en vivo** (orbe rojo ante amenaza, puntaje de seguridad) | ✅ |
-| 2 | Auditoría de hardening de Windows + puntaje de seguridad | ⏳ |
-| 3 | Detección inteligente + alertas por voz (Gemini) | ⏳ |
-| 4 | Análisis bajo demanda (archivos / URLs / hashes + cuarentena) | ⏳ |
-| 5 | Producto: instalador, licencias, docs | ⏳ |
+| **1** | GUI Command Center + **panel de vigilancia en vivo** (orbe rojo ante amenaza, puntaje) | ✅ |
+| **2** | **Auditoría de hardening** de Windows (Defender/Firewall/UAC/RDP/SMBv1) + botón "Blindar" | ✅ |
+| **3** | **Detección inteligente** (cerebro IA, resumen en lenguaje claro) + **alertas por voz** | ✅ |
+| **4** | **Análisis bajo demanda** (archivos / URLs / hashes + cuarentena) | ✅ |
+| **5** | **Producto**: licencias offline, build (PyInstaller) + instalador (Inno Setup), docs | ✅ |
 
 ---
 
@@ -63,14 +63,42 @@ Para ver **todas** las conexiones de red, ejecútalo como administrador.
 sentinel/
   sentinel/
     __init__.py          # marca, versión
+    __main__.py / app.py # entrada GUI
     scan.py              # demo headless del motor (CLI)
     core/
-      monitor.py         # motor de vigilancia (procesos/red/arranque)
-  assets/command_center/ # frontend reskineado (orbe verde guardián)
-  config/
-    settings.example.json
-  requirements.txt
+      monitor.py         # vigilancia (procesos/red/arranque)
+      hardening.py       # auditoría de defensas de Windows
+      fixer.py           # aplica correcciones (con UAC)
+      brain.py           # resumen/priorización (IA opcional)
+      voice.py           # alertas habladas (TTS de Windows)
+      analysis.py        # análisis de archivos/URLs/hashes + cuarentena
+      config.py          # carga de settings
+      license.py         # licenciamiento offline
+    ui/                  # ventana PyQt6 + bridge + worker
+    tools/genlicense.py  # emisor de claves (fabricante)
+  assets/command_center/ # frontend (orbe verde guardián, panel en vivo)
+  installer/installer.iss# instalador Inno Setup
+  build.py               # empaqueta con PyInstaller
+  docs/                  # EULA + guía de usuario
 ```
+
+## Empaquetar y vender
+
+```bash
+pip install pyinstaller
+python build.py                       # -> dist/SENTINEL/SENTINEL.exe
+iscc installer/installer.iss          # -> instalador SENTINEL_Setup.exe
+```
+
+Emitir una licencia (fabricante):
+
+```bash
+python -m sentinel.tools.genlicense "Cliente SAC"        # perpetua
+python -m sentinel.tools.genlicense "Cliente SAC" 365    # 1 año
+```
+
+El cliente pega la clave en `config/license.key`. Sin licencia, corre en
+**modo prueba**.
 
 ---
 

@@ -111,17 +111,36 @@ function setupBridge() {
   new QWebChannel(qt.webChannelTransport, (ch) => {
     pyBridge = ch.objects.pyBridge;
     if (pyBridge.request_theme) pyBridge.request_theme();
-    // SENTINEL: conectar la señal de vigilancia al panel en vivo
+    // SENTINEL: conectar señales de seguridad al panel en vivo
     if (pyBridge.scan_result && window.SentinelPanel) {
       pyBridge.scan_result.connect((json) => window.SentinelPanel.onScan(json));
+      if (pyBridge.fix_result) pyBridge.fix_result.connect((j) => window.SentinelPanel.onFix(j));
+      if (pyBridge.analysis_result) pyBridge.analysis_result.connect((j) => window.SentinelPanel.onAnalysis(j));
       window.SentinelPanel.setBridge(pyBridge);
+      if (window.SentinelAnalysis) window.SentinelAnalysis.setBridge(pyBridge);
     }
   });
 }
 
 /* ---------- Actions ---------- */
+// ¿El texto parece un objetivo a analizar? (URL, hash o ruta de archivo)
+function looksLikeTarget(t) {
+  const s = t.trim();
+  if (/^(https?:\/\/|www\.)/i.test(s)) return true;
+  if (/^[0-9a-f]{32}$|^[0-9a-f]{40}$|^[0-9a-f]{64}$/i.test(s)) return true;
+  if (/^[a-zA-Z]:\\/.test(s) || /^\//.test(s)) return true;     // ruta windows/unix
+  if (/^[\w-]+\.[\w.-]+\/\S*/.test(s)) return true;             // dominio/ruta
+  return false;
+}
+
 function sendText(t) {
   if (!t.trim()) return;
+  // Seguridad: si parece archivo/URL/hash, lo analizamos en vez de chatear.
+  if (looksLikeTarget(t) && pyBridge && pyBridge.analyze_path) {
+    setResponse("🔍 Analizando " + t + "…");
+    pyBridge.analyze_path(t.trim());
+    return;
+  }
   setResponse("› " + t);
   if (chatIsOpen()) chatAddUser(t);
   if (pyBridge && pyBridge.on_text_command) pyBridge.on_text_command(t); else mockReply();

@@ -344,12 +344,20 @@ def scan_autoruns() -> list[Finding]:
     return findings
 
 
-def full_scan() -> dict:
-    """Ejecuta los tres barridos y devuelve un reporte estructurado."""
+def full_scan(extra_findings: list[Finding] | None = None,
+              hardening: list | None = None,
+              hardening_score: int | None = None) -> dict:
+    """Ejecuta los tres barridos de vigilancia y arma el reporte.
+
+    `extra_findings` permite inyectar hallazgos de otros modulos (p. ej. el
+    blindaje/hardening) para que aparezcan en el mismo panel. `hardening` y
+    `hardening_score` se adjuntan al reporte para la pestana de blindaje.
+    """
     procs = scan_processes()
     net = scan_connections()
     auto = scan_autoruns()
-    all_findings = procs + net + auto
+    extra = list(extra_findings or [])
+    all_findings = procs + net + auto + extra
 
     by_sev: dict[str, int] = {s.label: 0 for s in Severity}
     for f in all_findings:
@@ -358,15 +366,21 @@ def full_scan() -> dict:
     # Ordenar por severidad descendente para mostrar lo grave primero.
     all_findings.sort(key=lambda f: f.severity, reverse=True)
 
-    return {
+    report = {
         "findings": [f.to_dict() for f in all_findings],
         "counts": {
             "total": len(all_findings),
             "procesos": len(procs),
             "red": len(net),
             "arranque": len(auto),
+            "blindaje": len(extra),
             "por_severidad": by_sev,
         },
         "max_severity": max((f.severity for f in all_findings),
                             default=Severity.INFO).label,
     }
+    if hardening is not None:
+        report["hardening"] = [c.to_dict() if hasattr(c, "to_dict") else c
+                               for c in hardening]
+        report["hardening_score"] = hardening_score
+    return report

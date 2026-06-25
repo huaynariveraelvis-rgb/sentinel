@@ -1,0 +1,39 @@
+CONTRATO DE LICENCIA DE USUARIO FINAL (EULA)
+SENTINEL — by ELVIS SYSTEMS Industrias
+Versión 0.1.0
+
+1. LICENCIA
+ELVIS SYSTEMS Industrias ("el Fabricante") concede al usuario una licencia
+no exclusiva e intransferible para instalar y usar SENTINEL ("el Software")
+en los equipos cubiertos por su clave de licencia.
+
+2. USO PERMITIDO
+El Software es una herramienta DEFENSIVA de seguridad para proteger el equipo
+en el que se instala. El usuario se compromete a usarlo únicamente sobre
+equipos de su propiedad o sobre los que tenga autorización explícita.
+
+3. RESTRICCIONES
+No está permitido: (a) usar el Software para atacar, intrusar o vulnerar
+sistemas de terceros; (b) realizar ingeniería inversa de la clave de
+licencia; (c) redistribuir o revender el Software sin autorización escrita
+del Fabricante.
+
+4. PRIVACIDAD
+SENTINEL realiza su análisis localmente. No envía datos del equipo a
+servidores del Fabricante. Las funciones opcionales que usan servicios de
+terceros (p. ej. IA de Gemini o VirusTotal) solo se activan si el usuario
+configura sus propias claves, y quedan sujetas a las políticas de esos
+servicios.
+
+5. GARANTÍA
+El Software se entrega "tal cual". El Fabricante no garantiza que detecte
+toda amenaza posible ni se responsabiliza por daños derivados de su uso.
+SENTINEL es una capa de protección, no un sustituto de las buenas prácticas
+de seguridad.
+
+6. PROPIEDAD
+El Software y su marca son propiedad de ELVIS SYSTEMS Industrias.
+
+Al instalar o usar SENTINEL, el usuario acepta este contrato.
+
+© ELVIS SYSTEMS Industrias. Todos los derechos reservados.

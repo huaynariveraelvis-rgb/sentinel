@@ -270,6 +270,17 @@
       <button class="upload-btn" id="uploadBtn">Elegir archivo</button>
     </div>
 
+    <!-- ===== Tarjeta de ANALISIS bajo demanda ===== -->
+    <div class="analysis-card" id="analysisCard" hidden>
+      <button class="an-close" id="anClose" title="Cerrar">✕</button>
+      <div class="an-head">
+        <div class="an-title" id="anTitle">Análisis</div>
+        <div class="an-target" id="anTarget"></div>
+      </div>
+      <div class="an-body" id="anBody"></div>
+      <button class="an-quarantine" id="anQuarantine" style="display:none">🔒 Poner en cuarentena</button>
+    </div>
+
     <!-- ===== Panel de VIGILANCIA EN VIVO (SENTINEL) ===== -->
     <aside class="sentinel-panel" id="sentinelPanel">
       <div class="sp-head">
@@ -291,6 +302,7 @@
   <script src="three.min.js"></script>
   <script src="orb_three.js"></script>
   <script src="sentinel_panel.js"></script>
+  <script src="sentinel_analysis.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

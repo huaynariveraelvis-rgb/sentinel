@@ -16,6 +16,8 @@ from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 class Bridge(QObject):
     scan_result = pyqtSignal(str)
     theme_changed = pyqtSignal(str)
+    fix_result = pyqtSignal(str)     # resultado de aplicar un blindaje (JSON)
+    analysis_result = pyqtSignal(str)  # resultado de analizar archivo/URL (JSON)
 
     def __init__(self, window):
         super().__init__()
@@ -32,6 +34,26 @@ class Bridge(QObject):
     @pyqtSlot()
     def request_scan(self) -> None:
         self._window.request_scan()
+
+    @pyqtSlot(str)
+    def apply_fix(self, key: str) -> None:
+        """Aplica el blindaje identificado por `key` (con UAC)."""
+        self._window.apply_fix(key)
+
+    @pyqtSlot(str)
+    def analyze_path(self, path: str) -> None:
+        """Analiza un archivo o URL bajo demanda."""
+        self._window.analyze(path)
+
+    @pyqtSlot()
+    def open_file(self) -> None:
+        """Abre un dialogo para elegir un archivo a analizar."""
+        self._window.pick_and_analyze()
+
+    @pyqtSlot(str)
+    def quarantine(self, path: str) -> None:
+        """Pone un archivo en cuarentena (reversible)."""
+        self._window.quarantine_file(path)
 
     @pyqtSlot()
     def request_theme(self) -> None:

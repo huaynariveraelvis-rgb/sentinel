@@ -14,8 +14,10 @@ out = Path(__file__).resolve().parent / "_ui_preview" / "sentinel_live.png"
 out.parent.mkdir(exist_ok=True)
 
 win = SentinelWindow(scan_interval=60)
-win.move(0, 0)
-win.showMaximized()
+# Forzar al monitor primario (el usuario tiene 2 monitores).
+scr = app.primaryScreen().geometry()
+win.setGeometry(scr)
+win.showNormal()
 win.raise_()
 win.activateWindow()
 
@@ -23,9 +25,12 @@ win.activateWindow()
 def grab():
     try:
         import mss, mss.tools
+        g = win.frameGeometry()
+        dpr = win.devicePixelRatioF()
+        region = {"left": int(g.x()*dpr), "top": int(g.y()*dpr),
+                  "width": int(g.width()*dpr), "height": int(g.height()*dpr)}
         with mss.mss() as s:
-            mon = s.monitors[1]  # monitor primario completo
-            img = s.grab(mon)
+            img = s.grab(region)
             mss.tools.to_png(img.rgb, img.size, output=str(out))
         print("SHOT_OK", out)
     except Exception as e:

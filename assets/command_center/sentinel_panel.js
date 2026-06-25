@@ -75,12 +75,15 @@
         const item = document.createElement("div");
         item.className = "sp-item";
         item.style.setProperty("--sev", color);
+        const ev = f.evidence || {};
+        const canFix = ev.fix_command && ev.key;
         item.innerHTML =
           `<span class="sp-ic">${SEV_ICON[sev] || "·"}</span>` +
           `<div class="sp-body">` +
           `<div class="sp-t"></div>` +
           `<div class="sp-d"></div>` +
           `<span class="sp-sev">${sev} · ${f.category || ""}</span>` +
+          (canFix ? `<button class="sp-fix" data-key="${ev.key}">🛡 Blindar</button>` : "") +
           `</div>`;
         item.querySelector(".sp-t").textContent = f.title || "";
         item.querySelector(".sp-d").textContent = f.detail || "";
@@ -93,13 +96,19 @@
     document.body.classList.toggle("threat", isThreat);
     if (window.Orb && window.Orb.setThreat) window.Orb.setThreat(isThreat);
 
-    // Mensaje central acorde
+    // Mensaje central: usa el resumen del cerebro si viene en el reporte.
     const respEl = $("response");
     if (respEl) {
-      if (isThreat) respEl.textContent = "⚠ Amenaza detectada. Revisá el panel.";
+      if (report.summary) respEl.textContent = (isThreat ? "⚠ " : "") + report.summary;
+      else if (isThreat) respEl.textContent = "⚠ Amenaza detectada. Revisá el panel.";
       else if (score >= 80) respEl.textContent = "SENTINEL en línea. Sistema protegido.";
       else respEl.textContent = "SENTINEL en línea. Hay puntos a revisar.";
     }
+  }
+
+  function flash(msg) {
+    const respEl = $("response");
+    if (respEl) respEl.textContent = msg;
   }
 
   window.SentinelPanel = {
@@ -111,13 +120,31 @@
       try { render(JSON.parse(json)); }
       catch (e) { console.error("SentinelPanel.onScan:", e); }
     },
+    onFix(json) {
+      try {
+        const r = JSON.parse(json);
+        flash(r.ok ? "✓ " + r.msg : "✗ " + r.msg);
+      } catch (e) { console.error(e); }
+    },
+    onAnalysis(json) {
+      try { window.SentinelAnalysis && window.SentinelAnalysis.show(JSON.parse(json)); }
+      catch (e) { console.error(e); }
+    },
   };
 
-  // Boton re-escanear
+  // Botones: re-escanear + delegacion para "Blindar"
   document.addEventListener("DOMContentLoaded", () => {
     const btn = document.getElementById("spRescan");
     if (btn) btn.addEventListener("click", () => {
       if (bridge && bridge.request_scan) bridge.request_scan();
+    });
+    const list = document.getElementById("spList");
+    if (list) list.addEventListener("click", (e) => {
+      const b = e.target.closest(".sp-fix");
+      if (b && bridge && bridge.apply_fix) {
+        flash("Aplicando blindaje… acepta el permiso de administrador.");
+        bridge.apply_fix(b.dataset.key);
+      }
     });
   });
 })();
