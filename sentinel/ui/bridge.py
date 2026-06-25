@@ -18,6 +18,7 @@ class Bridge(QObject):
     theme_changed = pyqtSignal(str)
     fix_result = pyqtSignal(str)     # resultado de aplicar un blindaje (JSON)
     analysis_result = pyqtSignal(str)  # resultado de analizar archivo/URL (JSON)
+    chat_reply = pyqtSignal(str)     # respuesta conversacional del cerebro
 
     def __init__(self, window):
         super().__init__()
@@ -29,6 +30,7 @@ class Bridge(QObject):
         """Recibe el reporte del worker (otro hilo) y lo reemite al JS.
         Al ser un slot, Qt encola la llamada al hilo principal -> QWebChannel
         entrega siempre desde el hilo correcto."""
+        self._window._last_report_json = json_str
         self.scan_result.emit(json_str)
 
     @pyqtSlot()
@@ -93,7 +95,9 @@ class Bridge(QObject):
     @pyqtSlot()
     def toggle_mute(self) -> None: ...
     @pyqtSlot(str)
-    def on_text_command(self, text: str) -> None: ...
+    def on_text_command(self, text: str) -> None:
+        """Mensaje de chat del usuario -> cerebro conversacional."""
+        self._window.chat(text)
     @pyqtSlot()
     def open_settings(self) -> None: ...
     @pyqtSlot()

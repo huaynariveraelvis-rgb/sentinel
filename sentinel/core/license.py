@@ -28,7 +28,12 @@ _VENDOR_SECRET = os.environ.get(
     "SENTINEL_LICENSE_SECRET",
     "ELVIS-SYSTEMS-SENTINEL-v1-7f3a9c2e8b14d6f0").encode()
 
-_LICENSE_FILE = Path(__file__).resolve().parent.parent.parent / "config" / "license.key"
+def _license_file() -> Path:
+    from sentinel.core.config import config_dir
+    return config_dir() / "license.key"
+
+
+_LICENSE_FILE = _license_file()
 _PREFIX = "SENT"
 
 

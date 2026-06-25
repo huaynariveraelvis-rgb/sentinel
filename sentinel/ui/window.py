@@ -30,6 +30,7 @@ class SentinelWindow(QMainWindow):
         scan_cfg = self.settings.get("scan", {})
         voice_cfg = self.settings.get("voice", {})
         interval = scan_interval or scan_cfg.get("auto_interval_seconds", 60)
+        self._last_report_json = None   # para dar contexto al chat
 
         self.view = QWebEngineView(self)
         try:
@@ -74,6 +75,33 @@ class SentinelWindow(QMainWindow):
 
     def request_scan(self) -> None:
         self.worker.trigger()
+
+    def chat(self, message: str) -> None:
+        """Responde un mensaje del usuario via el cerebro (Gemini), en un hilo."""
+        ai_cfg = self.settings.get("ai", {})
+        api_key = ai_cfg.get("gemini_api_key", "") if ai_cfg.get("enabled") else ""
+        voice_cfg = self.settings.get("voice", {})
+        speak_back = bool(voice_cfg.get("enabled"))
+        last = self._last_report_json
+
+        def _run():
+            from sentinel.core.brain import chat as brain_chat, context_from_report
+            ctx = ""
+            if last:
+                try:
+                    ctx = context_from_report(json.loads(last))
+                except Exception:
+                    ctx = ""
+            reply = brain_chat(message, api_key, ctx)
+            self.bridge.chat_reply.emit(reply)
+            if speak_back and api_key:
+                try:
+                    from sentinel.core.voice import speak
+                    speak(reply)
+                except Exception:
+                    pass
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def apply_fix(self, key: str) -> None:
         """Aplica un blindaje en un hilo (el UAC bloquea) y reporta resultado."""

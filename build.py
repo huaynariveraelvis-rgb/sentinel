@@ -27,6 +27,8 @@ def main() -> int:
         "--add-data", f"{ROOT/'config'/'settings.example.json'}{SEP}config",
         # PyQt6 WebEngine: PyInstaller trae hooks, pero aseguramos submodulos:
         "--collect-all", "PyQt6",
+        # Cerebro IA conversacional (Gemini):
+        "--collect-all", "google.genai",
         # icono opcional (descomenta cuando exista):
         # "--icon", str(ROOT/'assets'/'sentinel.ico'),
         str(ROOT / "run_sentinel.py"),

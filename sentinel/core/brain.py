@@ -38,6 +38,51 @@ def alert_phrase(finding: dict) -> str:
     return f"{pre}. {title}."
 
 
+_SYSTEM = (
+    "Eres SENTINEL, un guardián de ciberseguridad creado por ELVIS SYSTEMS "
+    "Industrias. Hablás en español, claro, directo y con confianza, tuteando al "
+    "usuario. Tu trabajo es PROTEGER su PC: explicás riesgos, recomendás qué "
+    "hacer y respondés dudas de seguridad. Sé conciso (2-5 frases salvo que "
+    "pidan más). No inventes: si no sabés algo, decílo. Eres defensivo — no "
+    "ayudás a atacar equipos de terceros."
+)
+
+
+def chat(message: str, api_key: str, context: str | None = None) -> str:
+    """Responde un mensaje del usuario como SENTINEL (via Gemini).
+    `context` = resumen del estado actual del equipo para aterrizar la respuesta."""
+    if not api_key:
+        return ("Para conversar necesito una clave de Gemini. Configurá "
+                "'ai.gemini_api_key' y 'ai.enabled' en config/settings.json.")
+    try:
+        from google import genai
+    except ImportError:
+        return "Falta el paquete google-genai. Instalalo con: pip install google-genai"
+    try:
+        prompt = _SYSTEM
+        if context:
+            prompt += "\n\nEstado actual del equipo (úsalo si es relevante):\n" + context
+        prompt += f"\n\nUsuario: {message}\nSENTINEL:"
+        client = genai.Client(api_key=api_key)
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash", contents=prompt)
+        return (getattr(resp, "text", "") or "").strip() or "No pude generar una respuesta."
+    except Exception as e:
+        return f"No pude responder ahora ({type(e).__name__}). Reintentá en un momento."
+
+
+def context_from_report(report: dict, max_items: int = 6) -> str:
+    """Arma un contexto corto con los hallazgos actuales para el chat."""
+    if not report:
+        return ""
+    lines = []
+    for f in (report.get("findings") or [])[:max_items]:
+        lines.append(f"- [{f.get('severity_label')}] {f.get('title')}")
+    score = report.get("counts", {}).get("total")
+    head = f"Puntaje/total hallazgos: {score}. " if score is not None else ""
+    return head + ("\n".join(lines) if lines else "Sin hallazgos relevantes.")
+
+
 def gemini_explain(findings: list, api_key: str, max_items: int = 6) -> str | None:
     """Explicacion enriquecida via Gemini (opcional). None si no se puede."""
     if not api_key or not findings:

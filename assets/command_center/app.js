@@ -116,6 +116,11 @@ function setupBridge() {
       pyBridge.scan_result.connect((json) => window.SentinelPanel.onScan(json));
       if (pyBridge.fix_result) pyBridge.fix_result.connect((j) => window.SentinelPanel.onFix(j));
       if (pyBridge.analysis_result) pyBridge.analysis_result.connect((j) => window.SentinelPanel.onAnalysis(j));
+      if (pyBridge.chat_reply) pyBridge.chat_reply.connect((txt) => {
+        setState("LISTENING");
+        setResponse(txt);
+        if (chatIsOpen()) chatUpdateBot(txt);
+      });
       window.SentinelPanel.setBridge(pyBridge);
       if (window.SentinelAnalysis) window.SentinelAnalysis.setBridge(pyBridge);
     }
@@ -143,7 +148,10 @@ function sendText(t) {
   }
   setResponse("› " + t);
   if (chatIsOpen()) chatAddUser(t);
-  if (pyBridge && pyBridge.on_text_command) pyBridge.on_text_command(t); else mockReply();
+  if (pyBridge && pyBridge.on_text_command) {
+    setState("THINKING");
+    pyBridge.on_text_command(t);
+  } else mockReply();
 }
 function toggleMute() { if (pyBridge && pyBridge.toggle_mute) pyBridge.toggle_mute(); setState(!muted ? "MUTED" : "LISTENING"); }
 function doStop() { if (pyBridge && pyBridge.stop) pyBridge.stop(); else setState("LISTENING"); }

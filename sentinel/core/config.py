@@ -6,10 +6,31 @@ arranca siempre, con o sin configuracion del usuario.
 """
 from __future__ import annotations
 
+import sys
 import json
 from pathlib import Path
 
-_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
+
+def config_dir() -> Path:
+    """Carpeta de configuracion del usuario.
+    - Empaquetado (.exe): junto al ejecutable (editable tras instalar).
+    - Desde codigo: la carpeta config/ del proyecto.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "config"
+    return Path(__file__).resolve().parent.parent.parent / "config"
+
+
+def _candidate_dirs() -> list[Path]:
+    dirs = [config_dir()]
+    # Plantilla empaquetada dentro del bundle (PyInstaller _internal / _MEIPASS).
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        dirs.append(Path(meipass) / "config")
+    return dirs
+
+
+_CONFIG_DIR = config_dir()
 
 _DEFAULTS = {
     "product": "SENTINEL",
@@ -34,12 +55,13 @@ def _deep_merge(base: dict, over: dict) -> dict:
 
 
 def load_settings() -> dict:
-    for name in ("settings.json", "settings.example.json"):
-        p = _CONFIG_DIR / name
-        if p.exists():
-            try:
-                user = json.loads(p.read_text(encoding="utf-8"))
-                return _deep_merge(_DEFAULTS, user)
-            except (ValueError, OSError):
-                continue
+    for d in _candidate_dirs():
+        for name in ("settings.json", "settings.example.json"):
+            p = d / name
+            if p.exists():
+                try:
+                    user = json.loads(p.read_text(encoding="utf-8"))
+                    return _deep_merge(_DEFAULTS, user)
+                except (ValueError, OSError):
+                    continue
     return dict(_DEFAULTS)
