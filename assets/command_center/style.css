@@ -221,6 +221,25 @@ body.threat .sp-title { color: var(--red); text-shadow: 0 0 10px rgba(255,51,85,
   background: linear-gradient(160deg, #ff5a78, var(--red)); box-shadow: 0 8px 22px rgba(255,51,85,.35); }
 .an-quarantine:hover { filter: brightness(1.08); }
 
+/* ===== Estética HACKER: matrix, scanlines, rejilla ===== */
+#matrix { position: absolute; inset: 0; width: 100%; height: 100%;
+  z-index: 0; opacity: .42; pointer-events: none; }
+.fx-grid { position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: .10;
+  background-image: linear-gradient(var(--pri) 1px, transparent 1px),
+                    linear-gradient(90deg, var(--pri) 1px, transparent 1px);
+  background-size: 42px 42px;
+  -webkit-mask-image: radial-gradient(circle at 50% 44%, transparent 28%, black 78%);
+  mask-image: radial-gradient(circle at 50% 44%, transparent 28%, black 78%); }
+.fx-scanlines { position: absolute; inset: 0; z-index: 46; pointer-events: none; opacity: .35;
+  background: repeating-linear-gradient(0deg,
+    rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px,
+    rgba(0,0,0,.22) 3px, rgba(0,0,0,0) 4px); }
+/* viñeta oscura en los bordes (foco central, look terminal) */
+.hud::after { content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, transparent 55%, rgba(0,0,0,.55) 100%); }
+/* Botones heredados que NO son de ciberseguridad: fuera. */
+#btnWhatsapp, #btnFolder { display: none !important; }
+
 /* ===== Badge de licencia (MODO PRUEBA) ===== */
 body.trial::after {
   content: "MODO PRUEBA · ELVIS SYSTEMS"; position: fixed; bottom: 10px; left: 14px;

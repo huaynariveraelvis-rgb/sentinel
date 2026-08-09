@@ -23,17 +23,57 @@ import base64
 import hashlib
 from pathlib import Path
 
-# En produccion: mover a variable de entorno / ofuscar. Aqui, valor por defecto.
-_VENDOR_SECRET = os.environ.get(
-    "SENTINEL_LICENSE_SECRET",
-    "ELVIS-SYSTEMS-SENTINEL-v1-7f3a9c2e8b14d6f0").encode()
+# El secreto del fabricante se busca, en orden:
+#   1. variable de entorno SENTINEL_LICENSE_SECRET  (build y emision de claves)
+#   2. archivo config/vendor.key                    (no versionado)
+#   3. valor de desarrollo incrustado               (solo para probar)
+#
+# Tener el secreto en el codigo fuente significa que cualquiera con acceso al
+# repositorio puede emitir licencias validas. Por eso el valor incrustado es
+# de DESARROLLO y `licensing_is_secure()` avisa cuando esta en uso.
+_DEV_SECRET = "SENTINEL-DEV-ONLY-NO-USAR-EN-PRODUCCION"
+
+
+def _load_secret() -> tuple[bytes, str]:
+    """Devuelve (secreto, origen)."""
+    env = os.environ.get("SENTINEL_LICENSE_SECRET")
+    if env:
+        return env.encode(), "entorno"
+    try:
+        from sentinel.core.config import config_dir
+        f = config_dir() / "vendor.key"
+        if f.exists():
+            val = f.read_text(encoding="utf-8").strip()
+            if val:
+                return val.encode(), "archivo"
+    except Exception:
+        pass
+    return _DEV_SECRET.encode(), "desarrollo"
+
+
+_VENDOR_SECRET, _SECRET_ORIGIN = _load_secret()
+
+
+def licensing_is_secure() -> bool:
+    """False si se esta usando el secreto de desarrollo incrustado."""
+    return _SECRET_ORIGIN != "desarrollo"
 
 def _license_file() -> Path:
-    from sentinel.core.config import config_dir
-    return config_dir() / "license.key"
+    """Donde se ESCRIBE la licencia: carpeta escribible del equipo."""
+    from sentinel.core.config import user_config_dir
+    return user_config_dir() / "license.key"
 
 
-_LICENSE_FILE = _license_file()
+def _license_sources() -> list[Path]:
+    """Donde se BUSCA la licencia, en orden.
+
+    Incluye la carpeta del producto para respetar una licencia pre-instalada
+    junto al ejecutable, que en Archivos de programa solo se puede leer.
+    """
+    from sentinel.core.config import config_dir, user_config_dir
+    return [user_config_dir() / "license.key", config_dir() / "license.key"]
+
+
 _PREFIX = "SENT"
 
 
@@ -93,16 +133,18 @@ def validate_key(key: str, secret: bytes = _VENDOR_SECRET) -> dict:
 
 def license_status() -> dict:
     """Estado de la licencia instalada (config/license.key)."""
-    if not _LICENSE_FILE.exists():
+    origen = next((p for p in _license_sources() if p.exists()), None)
+    if origen is None:
         return {"valid": False, "reason": "Sin licencia (modo prueba).",
                 "licensed": False}
     try:
-        key = _LICENSE_FILE.read_text(encoding="utf-8").strip()
+        key = origen.read_text(encoding="utf-8").strip()
     except OSError:
         return {"valid": False, "reason": "No se pudo leer la licencia.",
                 "licensed": False}
     res = validate_key(key)
     res["licensed"] = res.get("valid", False)
+    res["secure_signing"] = licensing_is_secure()
     return res
 
 
@@ -112,7 +154,7 @@ def install_key(key: str) -> dict:
     if not res.get("valid"):
         return res
     try:
-        _LICENSE_FILE.write_text(key.strip(), encoding="utf-8")
+        _license_file().write_text(key.strip(), encoding="utf-8")
     except OSError as e:
         return {"valid": False, "reason": f"No se pudo guardar: {e}"}
     return res

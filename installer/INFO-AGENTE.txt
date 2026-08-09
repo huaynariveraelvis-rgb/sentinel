@@ -1,0 +1,50 @@
+﻿QUE VA A INSTALARSE EN ESTE EQUIPO
+
+SENTINEL Agente es un componente de supervision de seguridad.
+Lea esta informacion antes de continuar.
+
+
+LO QUE INSTALA
+--------------
+  - Un programa en la carpeta que elija en el siguiente paso.
+  - Dos tareas programadas de Windows:
+        "SENTINEL Agente"         se ejecuta cada 15 minutos
+        "SENTINEL Agente Inicio"  se ejecuta al iniciar sesion
+    Ambas se ejecutan con la cuenta SYSTEM del sistema.
+
+
+LO QUE HACE
+-----------
+  - Revisa el estado de seguridad del equipo (antivirus, firewall,
+    control de cuentas, actualizaciones y otros 12 controles).
+  - Envia ese estado a la consola de administracion.
+  - Informa el uso de procesador, memoria, disco y red.
+
+
+LO QUE PERMITE HACER AL ADMINISTRADOR
+-------------------------------------
+  - Aplicar correcciones de configuracion de Windows.
+  - Aislar el equipo de la red local de forma reversible.
+  - Ejecutar comandos de consola en este equipo.
+
+Todas las acciones quedan registradas y son reversibles.
+
+
+LO QUE NO HACE
+--------------
+  - No modifica la configuracion de red ni el archivo hosts.
+  - No aplica ningun filtro de contenido.
+  - No accede a archivos personales, documentos ni contrasenas.
+  - No captura la pantalla ni el teclado.
+
+
+AVISO IMPORTANTE
+----------------
+Este agente concede control remoto sobre el equipo, incluida la
+ejecucion de comandos. Instalelo unicamente si usted es el
+responsable de este equipo o cuenta con su autorizacion expresa.
+
+Para retirarlo por completo en cualquier momento, use
+"Agregar o quitar programas" de Windows y desinstale
+"SENTINEL Agente". La desinstalacion elimina las tareas
+programadas y toda la configuracion.

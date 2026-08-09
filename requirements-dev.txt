@@ -1,0 +1,5 @@
+# Dependencias de desarrollo (no necesarias para ejecutar SENTINEL).
+#   pip install -r requirements-dev.txt
+#   python -m pytest tests -q
+-r requirements.txt
+pytest>=8.0

@@ -111,6 +111,8 @@ function setupBridge() {
   new QWebChannel(qt.webChannelTransport, (ch) => {
     pyBridge = ch.objects.pyBridge;
     if (pyBridge.request_theme) pyBridge.request_theme();
+    // Rol del equipo + datos de la nube (desbloquea la Consola de Flota si es root).
+    if (pyBridge.app_config) pyBridge.app_config((cfg) => { try { applyAppConfig(JSON.parse(cfg)); } catch (e) {} });
     // SENTINEL: conectar señales de seguridad al panel en vivo
     if (pyBridge.scan_result && window.SentinelPanel) {
       pyBridge.scan_result.connect((json) => window.SentinelPanel.onScan(json));
@@ -120,6 +122,18 @@ function setupBridge() {
         setState("LISTENING");
         setResponse(txt);
         if (chatIsOpen()) chatUpdateBot(txt);
+      });
+      // Voz en vivo (Gemini): estado del orbe, transcripción y nivel de audio.
+      if (pyBridge.voice_state) pyBridge.voice_state.connect((s) => setState(s));
+      if (pyBridge.voice_user) pyBridge.voice_user.connect((t) => {
+        if (chatIsOpen()) chatAddUser(t);
+      });
+      if (pyBridge.voice_bot) pyBridge.voice_bot.connect((t) => {
+        setResponse(t);
+        if (chatIsOpen()) chatUpdateBot(t);
+      });
+      if (pyBridge.voice_level) pyBridge.voice_level.connect((v) => {
+        if (window.Orb && window.Orb.setVolume) window.Orb.setVolume(v);
       });
       window.SentinelPanel.setBridge(pyBridge);
       if (window.SentinelAnalysis) window.SentinelAnalysis.setBridge(pyBridge);
@@ -277,9 +291,29 @@ function wire() {
   $("#fsBtn").addEventListener("click", doFullscreen);
   $("#exitBtn").addEventListener("click", () => pyBridge?.close_win?.());
 
+  // SENTINEL: la barra de comandos siempre visible (no hay voz que la abra).
+  document.body.classList.add("controls-on");
+
   const input = $("#textInput");
   $("#sendBtn").addEventListener("click", () => { sendText(input.value); input.value = ""; });
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") { sendText(input.value); input.value = ""; } });
+  // Empezar a teclear desde cualquier lado enfoca la barra y abre el chat.
+  document.addEventListener("keydown", (e) => {
+    if (e.target === input) return;
+    // No secuestrar el teclado si el usuario esta escribiendo en OTRO campo
+    // (p. ej. la terminal de la consola) ni cuando la consola de seguridad
+    // esta abierta. Sin esto, teclear en la terminal abria el chat y le
+    // robaba el foco: las teclas terminaban en el chat, no en la terminal.
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    const sc = $("#scRoot");
+    if (sc && !sc.hidden) return;
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.key.length === 1 || e.key === "Enter") {
+      if (!chatIsOpen()) chatOpen();
+      input.focus();
+    }
+  });
 
   // Frameless window dragging: ONLY the top ~54px strip acts as a title bar,
   // so clicking the orb / empty space never accidentally moves the window.
@@ -297,6 +331,54 @@ function wire() {
   dz.addEventListener("drop", (e) => { e.preventDefault(); const f = e.dataTransfer?.files?.[0];
     if (f) { setResponse("Archivo: " + f.name); pyBridge?.drop_file?.(f.name); } });
 }
+
+/* ---------- Consola de Flota (nube embebida · solo equipos root) ---------- */
+let _cloudUrl = "https://sentinel-cloud-eight.vercel.app";
+let _adminToken = "";
+let _cfgApplied = false;
+function applyAppConfig(cfg) {
+  _cfgApplied = true;
+  if (cfg && cfg.cloud_url) _cloudUrl = cfg.cloud_url;
+  if (cfg && cfg.admin_token) _adminToken = cfg.admin_token;
+  if (cfg && String(cfg.role || "").toLowerCase() === "root") {
+    document.body.classList.add("root-mode");
+  }
+}
+function openFleet() {
+  const f = document.getElementById("flotaFrame");
+  const p = document.getElementById("flotaPanel");
+  if (!f || !p) return;
+  const url = _cloudUrl + (_adminToken ? ("?key=" + encodeURIComponent(_adminToken)) : "");
+  f.classList.remove("ready");
+  if (f.getAttribute("src") !== url) f.setAttribute("src", url);
+  else f.classList.add("ready");
+  p.hidden = false;
+}
+function closeFleet() { const p = document.getElementById("flotaPanel"); if (p) p.hidden = true; }
+(function wireFleet() {
+  const b = document.getElementById("btnFleet");
+  if (b) b.addEventListener("click", openFleet);
+  const x = document.getElementById("flotaClose");
+  if (x) x.addEventListener("click", closeFleet);
+  const r = document.getElementById("flotaReload");
+  if (r) r.addEventListener("click", () => {
+    const f = document.getElementById("flotaFrame");
+    if (f) { const u = f.getAttribute("src"); f.classList.remove("ready"); f.setAttribute("src", "about:blank"); setTimeout(() => f.setAttribute("src", u), 60); }
+  });
+  const fr = document.getElementById("flotaFrame");
+  if (fr) fr.addEventListener("load", () => { if (fr.getAttribute("src") !== "about:blank") fr.classList.add("ready"); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { const p = document.getElementById("flotaPanel"); if (p && !p.hidden) closeFleet(); }
+  });
+  // Fallback para probar en un navegador normal (sin puente Qt): index.html?root=1
+  const _testRoot = () => {
+    if (!_cfgApplied && new URLSearchParams(location.search).get("root") === "1") {
+      applyAppConfig({ role: "root", cloud_url: _cloudUrl, admin_token: "" });
+    }
+  };
+  _testRoot();
+  setTimeout(_testRoot, 1000);
+})();
 
 /* ---------- Boot ---------- */
 window.addEventListener("DOMContentLoaded", () => {

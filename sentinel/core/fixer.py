@@ -24,15 +24,28 @@ def apply_fix(command: str) -> tuple[bool, str]:
         "exit $p.ExitCode"
     )
     try:
+        from sentinel.core.winproc import oculto
         out = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", launcher],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, timeout=120, **oculto())
     except (subprocess.TimeoutExpired, OSError) as e:
         return False, f"No se pudo ejecutar la correccion: {e}"
 
     if out.returncode == 0:
+        _log(command, True, "Correccion aplicada.")
         return True, "Correccion aplicada. Re-escaneando para confirmar…"
     # 1223 = el usuario cancelo el UAC
     if out.returncode == 1223 or "cancel" in (out.stderr or "").lower():
+        _log(command, False, "El usuario cancelo el permiso de administrador.")
         return False, "Cancelaste el permiso de administrador."
+    _log(command, False, f"Codigo de salida {out.returncode}.")
     return False, f"La correccion no se completo (codigo {out.returncode})."
+
+
+def _log(command: str, ok: bool, detail: str) -> None:
+    """Deja constancia del cambio aplicado (o del intento fallido)."""
+    try:
+        from sentinel.core.audit_log import record
+        record("correccion_blindaje", target=command[:200], ok=ok, detail=detail)
+    except Exception:
+        pass

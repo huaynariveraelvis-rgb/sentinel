@@ -17,6 +17,8 @@ los expliquen y prioricen.
 from __future__ import annotations
 
 import os
+import time
+import subprocess
 import ipaddress
 from dataclasses import dataclass, field, asdict
 from enum import IntEnum
@@ -50,16 +52,25 @@ class Severity(IntEnum):
 @dataclass
 class Finding:
     """Un hallazgo de seguridad detectado por el motor."""
-    category: str          # "proceso" | "red" | "arranque"
+    category: str          # "proceso" | "red" | "arranque" | "blindaje"
     severity: Severity
     title: str             # resumen corto, legible
     detail: str            # explicacion en lenguaje claro
     evidence: dict = field(default_factory=dict)  # datos crudos (pid, ruta, ip...)
+    attack: str = ""       # tecnica MITRE ATT&CK que evidencia (ver core.catalog)
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["severity"] = int(self.severity)
         d["severity_label"] = self.severity.label
+        # Adjunta la ficha de la tecnica para que la UI y el reporte puedan
+        # mostrar nombre, tactica y enlace sin volver a consultar el catalogo.
+        if self.attack:
+            try:
+                from sentinel.core.catalog import describe
+                d["attack_info"] = describe(self.attack)
+            except Exception:
+                d["attack_info"] = None
         return d
 
 
@@ -102,15 +113,16 @@ _SYSTEM_DIRS = (
 )
 
 # Puertos cuya exposicion a todas las interfaces es de alto riesgo.
+# (servicio, severidad, tecnica ATT&CK que habilita su exposicion)
 _RISKY_PORTS = {
-    23: ("Telnet", Severity.HIGH),
-    445: ("SMB (compartir archivos)", Severity.HIGH),
-    3389: ("RDP (escritorio remoto)", Severity.HIGH),
-    5900: ("VNC (control remoto)", Severity.HIGH),
-    135: ("RPC", Severity.MEDIUM),
-    139: ("NetBIOS", Severity.MEDIUM),
-    1433: ("SQL Server", Severity.MEDIUM),
-    3306: ("MySQL", Severity.MEDIUM),
+    23: ("Telnet", Severity.HIGH, "T1210"),
+    445: ("SMB (compartir archivos)", Severity.HIGH, "T1021.002"),
+    3389: ("RDP (escritorio remoto)", Severity.HIGH, "T1021.001"),
+    5900: ("VNC (control remoto)", Severity.HIGH, "T1021.005"),
+    135: ("RPC", Severity.MEDIUM, "T1210"),
+    139: ("NetBIOS", Severity.MEDIUM, "T1021.002"),
+    1433: ("SQL Server", Severity.MEDIUM, "T1210"),
+    3306: ("MySQL", Severity.MEDIUM, "T1210"),
 }
 
 
@@ -126,6 +138,42 @@ def _is_in_suspicious_dir(exe_path: str, susp_dirs: list[Path]) -> Path | None:
         except (OSError, ValueError):
             continue
     return None
+
+
+# Caché de puertos bloqueados por firewall (la consulta PowerShell es lenta).
+_blocked_cache: dict = {"ports": set(), "ts": 0.0}
+_BLOCKED_TTL = 20.0
+
+
+def invalidate_firewall_cache() -> None:
+    """Fuerza releer el firewall en el próximo barrido (tras cerrar un puerto)."""
+    _blocked_cache["ts"] = 0.0
+
+
+def blocked_inbound_ports() -> set:
+    """Puertos con regla de firewall ENTRANTE de BLOQUEO activa = mitigados.
+    Cacheado para no pegarle a PowerShell en cada barrido."""
+    now = time.monotonic()
+    if _blocked_cache["ts"] and (now - _blocked_cache["ts"]) < _BLOCKED_TTL:
+        return _blocked_cache["ports"]
+    ps = ("Get-NetFirewallRule -Direction Inbound -Action Block -Enabled True "
+          "-ErrorAction SilentlyContinue | ForEach-Object { "
+          "($_ | Get-NetFirewallPortFilter).LocalPort }")
+    ports: set = set()
+    try:
+        from sentinel.core.winproc import oculto
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=10, **oculto())
+        for line in (out.stdout or "").splitlines():
+            s = line.strip()
+            if s.isdigit():
+                ports.add(int(s))
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    _blocked_cache["ports"] = ports
+    _blocked_cache["ts"] = now
+    return ports
 
 
 def _is_private_ip(ip: str) -> bool:
@@ -166,6 +214,7 @@ def scan_processes() -> list[Finding]:
                                 f"clasico de malware que suplanta nombres de Windows."),
                         evidence={"pid": pid, "name": name, "exe": exe,
                                   "user": info.get("username")},
+                        attack="T1036.005",
                     ))
                     continue
 
@@ -182,6 +231,7 @@ def scan_processes() -> list[Finding]:
                                 f"ejecuta desde ahi; vale la pena revisar que es."),
                         evidence={"pid": pid, "name": name, "exe": exe,
                                   "dir": str(hit), "user": info.get("username")},
+                        attack="T1204.002",
                     ))
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
@@ -217,6 +267,7 @@ def scan_connections() -> list[Finding]:
     # Un mismo puerto suele escuchar en 0.0.0.0 (IPv4) y :: (IPv6): es el mismo
     # riesgo, no dos. Deduplicamos por (puerto, proceso).
     seen_listen: set[tuple] = set()
+    blocked = blocked_inbound_ports()   # puertos ya protegidos por firewall
 
     for c in conns:
         try:
@@ -230,16 +281,38 @@ def scan_connections() -> list[Finding]:
                     if key in seen_listen:
                         continue
                     seen_listen.add(key)
+                    is_blocked = lport in blocked
                     if lport in _RISKY_PORTS:
-                        svc, sev = _RISKY_PORTS[lport]
+                        svc, sev, tech = _RISKY_PORTS[lport]
+                        if is_blocked:
+                            findings.append(Finding(
+                                category="red", severity=Severity.INFO,
+                                title=f"Puerto {lport} ({svc}) protegido por firewall",
+                                detail=(f"El puerto {lport} ({svc}) sigue a la escucha "
+                                        f"localmente, pero una regla de firewall BLOQUEA el "
+                                        f"acceso entrante desde la red. Riesgo mitigado."),
+                                evidence={"pid": c.pid, "proc": proc_name, "port": lport,
+                                          "service": svc, "ip": lip, "blocked": True},
+                            ))
+                        else:
+                            findings.append(Finding(
+                                category="red", severity=sev,
+                                title=f"Puerto de riesgo {lport} expuesto ({svc})",
+                                detail=(f"El puerto {lport} ({svc}) esta a la escucha en TODAS "
+                                        f"las interfaces ({lip}), abierto por '{proc_name}'. "
+                                        f"Si no lo usas, es una via de entrada que conviene cerrar."),
+                                evidence={"pid": c.pid, "proc": proc_name,
+                                          "port": lport, "service": svc, "ip": lip},
+                                attack=tech,
+                            ))
+                    elif is_blocked:
                         findings.append(Finding(
-                            category="red", severity=sev,
-                            title=f"Puerto de riesgo {lport} expuesto ({svc})",
-                            detail=(f"El puerto {lport} ({svc}) esta a la escucha en TODAS "
-                                    f"las interfaces ({lip}), abierto por '{proc_name}'. "
-                                    f"Si no lo usas, es una via de entrada que conviene cerrar."),
+                            category="red", severity=Severity.INFO,
+                            title=f"Puerto {lport} protegido por firewall",
+                            detail=(f"'{proc_name}' escucha en {lport}, pero el firewall "
+                                    f"bloquea el acceso entrante. Riesgo mitigado."),
                             evidence={"pid": c.pid, "proc": proc_name,
-                                      "port": lport, "service": svc, "ip": lip},
+                                      "port": lport, "ip": lip, "blocked": True},
                         ))
                     else:
                         findings.append(Finding(
@@ -249,6 +322,7 @@ def scan_connections() -> list[Finding]:
                                     f"la red. Revisa que sea esperado."),
                             evidence={"pid": c.pid, "proc": proc_name,
                                       "port": lport, "ip": lip},
+                            attack="T1210",
                         ))
 
             # 2) Conexiones establecidas hacia IPs publicas
@@ -262,6 +336,7 @@ def scan_connections() -> list[Finding]:
                                 f"Normal para navegadores/apps; util para detectar trafico raro."),
                         evidence={"pid": c.pid, "proc": proc_name,
                                   "remote_ip": rip, "remote_port": c.raddr.port},
+                        attack="T1071",
                     ))
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
@@ -314,6 +389,7 @@ def scan_autoruns() -> list[Finding]:
                     findings.append(Finding(
                         category="arranque", severity=sev, title=title, detail=detail,
                         evidence={"name": name, "command": cmd, "hive": hive_name},
+                        attack="T1547.001",
                     ))
             finally:
                 winreg.CloseKey(key)
@@ -340,6 +416,7 @@ def scan_autoruns() -> list[Finding]:
                 title=f"Inicio automatico: {e}",
                 detail=f"'{e}' esta en la carpeta de Inicio y arranca con el sistema.",
                 evidence={"file": e, "dir": sd},
+                attack="T1547.001",
             ))
     return findings
 
@@ -357,6 +434,13 @@ def full_scan(extra_findings: list[Finding] | None = None,
     net = scan_connections()
     auto = scan_autoruns()
     extra = list(extra_findings or [])
+    # Modo demo (para videos): amenazas sintéticas si config/demo.flag existe.
+    try:
+        from sentinel.core.demo import demo_active, demo_findings
+        if demo_active():
+            extra = extra + demo_findings()
+    except Exception:
+        pass
     all_findings = procs + net + auto + extra
 
     by_sev: dict[str, int] = {s.label: 0 for s in Severity}
@@ -366,8 +450,18 @@ def full_scan(extra_findings: list[Finding] | None = None,
     # Ordenar por severidad descendente para mostrar lo grave primero.
     all_findings.sort(key=lambda f: f.severity, reverse=True)
 
+    findings_dicts = [f.to_dict() for f in all_findings]
+
+    # Cobertura ATT&CK: que tecnicas catalogadas evidencia esta auditoria.
+    try:
+        from sentinel.core.catalog import coverage
+        attack_coverage = coverage(findings_dicts)
+    except Exception:
+        attack_coverage = {"total_tecnicas": 0, "tecnicas": []}
+
     report = {
-        "findings": [f.to_dict() for f in all_findings],
+        "findings": findings_dicts,
+        "attack_coverage": attack_coverage,
         "counts": {
             "total": len(all_findings),
             "procesos": len(procs),

@@ -8,8 +8,10 @@ PyQt6>=6.6
 PyQt6-WebEngine>=6.6
 mss>=9.0
 
-# Cerebro IA conversacional (Fase 3 / chat):
+# Cerebro IA conversacional + voz en vivo (chat de texto y voz tipo JARVIS):
 google-genai>=0.3
+sounddevice>=0.4
+numpy>=1.24
 
 # Análisis con VirusTotal (opcional):
 # requests>=2.31

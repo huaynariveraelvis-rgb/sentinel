@@ -1,0 +1,18 @@
+{
+  "_LEEME": "PLANTILLA DE ALCANCE. Copia este archivo a 'alcance.json' y EDITA cada campo con los datos reales de TU acta de autorizacion. El Auditor no toca ninguna maquina que no este en 'targets', ni fuera de la 'window', ni fases que no esten en 'allowed_phases'. Sin este archivo (o si esta mal formado) el Auditor no corre.",
+
+  "engagement": "EDITAR - nombre del engagement (ej. Auditoria Lab SENATI - Aula 3)",
+  "authorized_by": "EDITAR - responsable que autoriza por escrito (nombre y cargo)",
+  "authorization_ref": "EDITAR - referencia del acta (ej. ACTA-2026-014)",
+  "operator": "Elvis Huayna",
+
+  "targets": ["192.168.56.0/24"],
+  "excludes": ["192.168.56.1"],
+
+  "window": {
+    "start": "2026-08-10T08:00:00",
+    "end":   "2026-08-10T18:00:00"
+  },
+
+  "allowed_phases": ["recon", "enum", "vuln"]
+}

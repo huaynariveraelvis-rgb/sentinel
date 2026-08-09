@@ -18,7 +18,13 @@ class Bridge(QObject):
     theme_changed = pyqtSignal(str)
     fix_result = pyqtSignal(str)     # resultado de aplicar un blindaje (JSON)
     analysis_result = pyqtSignal(str)  # resultado de analizar archivo/URL (JSON)
+    report_result = pyqtSignal(str)    # resultado de generar el informe (JSON)
+    command_result = pyqtSignal(str)   # salida de un comando de la terminal (JSON)
     chat_reply = pyqtSignal(str)     # respuesta conversacional del cerebro
+    voice_state = pyqtSignal(str)    # estado de voz: LISTENING/THINKING/SPEAKING
+    voice_user = pyqtSignal(str)     # transcripción de lo que dijo el usuario
+    voice_bot = pyqtSignal(str)      # texto que va hablando SENTINEL
+    voice_level = pyqtSignal(float)  # nivel de audio 0..1 (anima el orbe)
 
     def __init__(self, window):
         super().__init__()
@@ -43,6 +49,18 @@ class Bridge(QObject):
         self._window.apply_fix(key)
 
     @pyqtSlot(str)
+    def run_command(self, command: str) -> None:
+        """Ejecuta un comando en ESTE equipo (la terminal de la consola).
+        Es un terminal local: corre donde corre SENTINEL, con el permiso del
+        usuario que lo opera, y queda registrado."""
+        self._window.run_command(command)
+
+    @pyqtSlot(str, bool)
+    def generate_report(self, label: str, pdf: bool) -> None:
+        """Genera el informe tecnico del ultimo barrido y lo abre."""
+        self._window.generate_report(label, pdf)
+
+    @pyqtSlot(str)
     def analyze_path(self, path: str) -> None:
         """Analiza un archivo o URL bajo demanda."""
         self._window.analyze(path)
@@ -60,6 +78,23 @@ class Bridge(QObject):
     @pyqtSlot()
     def request_theme(self) -> None:
         self.theme_changed.emit("guardian")
+
+    @pyqtSlot(result=str)
+    def app_config(self) -> str:
+        """Config que el frontend necesita al arrancar: rol del equipo y datos
+        de la Consola de Flota (nube). El token de administrador SOLO se entrega
+        si este equipo es 'root' — un equipo normal nunca podra comandar el
+        parque aunque abran la app."""
+        import json
+        from sentinel.core import config
+        s = config.load_settings()
+        role = str(s.get("role", "agent")).lower()
+        cloud = s.get("cloud", {}) or {}
+        return json.dumps({
+            "role": role,
+            "cloud_url": str(cloud.get("url", "")),
+            "admin_token": str(cloud.get("admin_token", "")) if role == "root" else "",
+        })
 
     # ---- Controles de ventana ----
     @pyqtSlot()
@@ -92,8 +127,10 @@ class Bridge(QObject):
     # ---- Stubs inofensivos (heredados del frontend) ----
     @pyqtSlot()
     def stop(self) -> None: ...
+
     @pyqtSlot()
-    def toggle_mute(self) -> None: ...
+    def toggle_mute(self) -> None:
+        self._window.toggle_voice_mute()
     @pyqtSlot(str)
     def on_text_command(self, text: str) -> None:
         """Mensaje de chat del usuario -> cerebro conversacional."""

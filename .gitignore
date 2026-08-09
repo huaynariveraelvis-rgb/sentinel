@@ -18,6 +18,9 @@ sentinel.log
 sentinel.*.log
 logs/
 quarantine/
+# Evidencia de auditorias: contiene el estado real de equipos auditados,
+# no debe versionarse aunque este anonimizada.
+data/
 config/scan_history.json
 config/user_state.json
 
@@ -26,8 +29,31 @@ build/
 dist/
 _ui_preview/
 *.spec
+*.exe
+installer/Output/
+build-agent/
+dist-agent/
+
+# --- Venv rotos y respaldos pesados (NUNCA al repo) ---
+.venv-roto*/
+ENTREGA-SENTINEL/
+_respaldo-*/
+
+# --- Config y estado local adicional ---
+config.json
+config/demo.flag
+config/demo_resolved.json
+agente-lab/
+
+# --- Scratch ---
+_dump_doc.py
 
 # --- SO ---
 Thumbs.db
 desktop.ini
 .DS_Store
+
+.vercel
+
+# --- Evidencia del motor ofensivo (Auditor): estado real de equipos ---
+evidencia_ofensiva/

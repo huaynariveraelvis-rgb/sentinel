@@ -1,0 +1,96 @@
+/* ============================================================
+   hud.css — Marco de comando ambiental alrededor del núcleo.
+   Aditivo y NO interactivo (pointer-events:none): no toca el orbe
+   ni la lógica. Solo llena el vacío y da densidad de "centro de mando".
+   ELVIS SYSTEMS.
+   ============================================================ */
+
+.hud-fx{position:absolute;inset:0;pointer-events:none;z-index:1;font-family:var(--mono)}
+@media(prefers-reduced-motion:reduce){.hud-fx *{animation:none!important}}
+
+/* ---- anillos orbitales (giran alrededor del orbe) ---- */
+.hud-rings{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:min(620px,64vw);aspect-ratio:1;opacity:.55}
+.hud-rings svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.hud-rings .r1{animation:hudspin 66s linear infinite}
+.hud-rings .r2{animation:hudspin 44s linear infinite reverse;opacity:.7}
+.hud-rings .r3{animation:hudspin 90s linear infinite;opacity:.5}
+@keyframes hudspin{to{transform:rotate(360deg)}}
+.hud-rings circle{fill:none;stroke:var(--hair)}
+.hud-rings .tick{stroke:color-mix(in srgb,var(--pri) 70%,transparent);stroke-width:2}
+.hud-rings .arc{fill:none;stroke:var(--pri);stroke-width:2;opacity:.75;
+  filter:drop-shadow(0 0 5px var(--glow))}
+
+/* ---- esquinas tipo marco de objetivo ---- */
+.hud-corner{position:absolute;width:66px;height:66px;border:1.5px solid var(--hair);opacity:.55}
+.hud-corner.tl{top:14px;left:14px;border-right:0;border-bottom:0;border-radius:9px 0 0 0}
+.hud-corner.bl{bottom:14px;left:14px;border-right:0;border-top:0;border-radius:0 0 0 9px}
+.hud-corner.br{bottom:14px;right:14px;border-left:0;border-top:0;border-radius:0 9px 0 0}
+
+/* ---- columna de estado a la izquierda (llena el vacío) ---- */
+.hud-rail{position:absolute;left:24px;top:50%;transform:translateY(-50%);
+  width:216px;display:flex;flex-direction:column;gap:13px}
+@media(max-width:900px){.hud-rail{display:none}}
+.rl-card{position:relative;
+  background:linear-gradient(180deg,rgba(10,26,20,.5),rgba(5,13,10,.66));
+  border:1px solid var(--hair);border-radius:13px;padding:13px 15px;
+  box-shadow:0 10px 30px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.05)}
+.rl-h{font-size:9px;letter-spacing:.22em;text-transform:uppercase;margin-bottom:11px;
+  display:flex;align-items:center;gap:8px;color:color-mix(in srgb,var(--pri) 78%,var(--text))}
+.rl-h::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--pri);
+  box-shadow:0 0 9px var(--pri);animation:hudpulse 2s ease-in-out infinite}
+@keyframes hudpulse{0%,100%{opacity:1}50%{opacity:.28}}
+/* barras de actividad del núcleo (equalizer ambiental) */
+.rl-bars{display:flex;align-items:flex-end;gap:4px;height:46px}
+.rl-bars i{flex:1;border-radius:2px;height:30%;opacity:.9;
+  background:linear-gradient(180deg,var(--pri),var(--pri-dim));animation:hudeq 1.5s ease-in-out infinite}
+.rl-bars i:nth-child(1){animation-delay:0s}.rl-bars i:nth-child(2){animation-delay:.12s}
+.rl-bars i:nth-child(3){animation-delay:.24s}.rl-bars i:nth-child(4){animation-delay:.36s}
+.rl-bars i:nth-child(5){animation-delay:.48s}.rl-bars i:nth-child(6){animation-delay:.6s}
+.rl-bars i:nth-child(7){animation-delay:.72s}.rl-bars i:nth-child(8){animation-delay:.84s}
+@keyframes hudeq{0%,100%{height:22%}50%{height:92%}}
+/* filas de estado */
+.rl-row{display:flex;align-items:center;justify-content:space-between;font-size:10.5px;
+  padding:7px 0;border-top:1px solid rgba(47,230,168,.09);color:color-mix(in srgb,var(--text) 82%,transparent)}
+.rl-row:first-of-type{border-top:0}
+.rl-row b{font-weight:500;color:var(--pri);letter-spacing:.04em}
+.rl-row .amber{color:var(--amber)}
+.rl-cap{font-size:8.5px;letter-spacing:.2em;color:color-mix(in srgb,var(--text) 45%,transparent);
+  text-transform:uppercase;margin-top:9px;text-align:center}
+
+/* ============================================================
+   CONSOLA DE FLOTA — botón + panel de la nube embebido.
+   El botón solo aparece en equipos con rol "root".
+   ============================================================ */
+.flota-btn{display:none!important}
+body.root-mode .flota-btn{display:grid!important}
+/* acento distinto para que se note que es "la nube / el parque" */
+body.root-mode .flota-btn{border-color:color-mix(in srgb,var(--pri) 45%,var(--hair));
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--pri) 22%,transparent) inset,0 5px 16px rgba(0,0,0,.4)}
+.flota-btn svg{opacity:.92}
+
+.flota-panel{position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;
+  background:#05100c;animation:flotaIn .24s cubic-bezier(.2,.8,.2,1)}
+.flota-panel[hidden]{display:none}
+@keyframes flotaIn{from{opacity:0;transform:scale(.992)}to{opacity:1;transform:none}}
+.flota-head{display:flex;align-items:center;gap:14px;padding:12px 16px;flex-wrap:wrap;
+  border-bottom:1px solid var(--hair);
+  background:linear-gradient(180deg,rgba(18,30,48,.92),rgba(8,14,24,.96))}
+.flota-title{font-family:var(--mono);font-size:13px;font-weight:700;letter-spacing:.14em;
+  color:var(--pri);display:flex;align-items:center;gap:9px}
+.flota-title .fdot{width:8px;height:8px;border-radius:50%;background:var(--pri);
+  box-shadow:0 0 9px var(--pri);animation:hudpulse 2s ease-in-out infinite}
+.flota-sub{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
+  color:color-mix(in srgb,var(--text) 48%,transparent)}
+.flota-actions{margin-left:auto;display:flex;gap:8px}
+.flota-x{width:34px;height:34px;border-radius:9px;background:rgba(10,22,34,.6);
+  border:1px solid var(--hair);color:var(--text);cursor:pointer;font-size:16px;
+  display:grid;place-items:center;transition:.15s;line-height:1}
+.flota-x:hover{border-color:var(--pri);color:var(--pri);background:color-mix(in srgb,var(--pri) 10%,transparent)}
+.flota-body{flex:1;position:relative;background:#07090C}
+.flota-load{position:absolute;inset:0;display:grid;place-items:center;z-index:1;
+  font-family:var(--mono);font-size:12px;letter-spacing:.16em;
+  color:color-mix(in srgb,var(--text) 55%,transparent);text-transform:uppercase}
+#flotaFrame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#07090C;z-index:2;
+  opacity:0;transition:opacity .4s ease}
+#flotaFrame.ready{opacity:1}

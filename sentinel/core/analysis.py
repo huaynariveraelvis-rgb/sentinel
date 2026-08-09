@@ -21,9 +21,17 @@ import shutil
 from pathlib import Path
 from urllib.parse import urlparse
 
-from sentinel.core.config import load_settings
+from sentinel.core.config import load_settings, state_dir
 
-_QUARANTINE = Path(__file__).resolve().parent.parent.parent / "quarantine"
+
+def _quarantine_dir() -> Path:
+    """Carpeta de cuarentena, en la zona escribible del equipo.
+
+    Se calcula al usarla, no al importar: empaquetado, `__file__` apunta
+    dentro del bundle de solo lectura y aislar un archivo fallaba en silencio,
+    que es el peor final posible para esta funcion.
+    """
+    return state_dir() / "quarantine"
 
 # Extensiones ejecutables / de riesgo frecuente en adjuntos maliciosos.
 _RISKY_EXT = {
@@ -222,15 +230,27 @@ def quarantine(path: str) -> dict:
     p = Path(path)
     if not p.is_file():
         return {"ok": False, "error": "El archivo ya no existe."}
-    _QUARANTINE.mkdir(exist_ok=True)
+    quarantine_dir = _quarantine_dir()
+    quarantine_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    dest = _QUARANTINE / f"{stamp}__{p.name}.quarantine"
+    dest = quarantine_dir / f"{stamp}__{p.name}.quarantine"
     try:
         shutil.move(str(p), str(dest))
         (dest.with_suffix(dest.suffix + ".json")).write_text(
             json.dumps({"original": str(p), "quarantined_at": stamp},
                        ensure_ascii=False), encoding="utf-8")
+        _log_action("cuarentena", str(p), True, f"Aislado en {dest.name}")
         return {"ok": True, "message": f"En cuarentena: {p.name}",
                 "quarantined": str(dest)}
     except OSError as e:
+        _log_action("cuarentena", str(p), False, str(e))
         return {"ok": False, "error": f"No se pudo mover a cuarentena: {e}"}
+
+
+def _log_action(action: str, target: str, ok: bool, detail: str) -> None:
+    """Deja constancia de la accion; nunca interrumpe la operacion."""
+    try:
+        from sentinel.core.audit_log import record
+        record(action, target=target, ok=ok, detail=detail)
+    except Exception:
+        pass

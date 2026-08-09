@@ -27,8 +27,18 @@ def main() -> int:
         "--add-data", f"{ROOT/'config'/'settings.example.json'}{SEP}config",
         # PyQt6 WebEngine: PyInstaller trae hooks, pero aseguramos submodulos:
         "--collect-all", "PyQt6",
-        # Cerebro IA conversacional (Gemini):
+        # Cerebro IA conversacional (Gemini) + su capa HTTP (import diferido,
+        # PyInstaller no lo detecta solo -> forzamos httpx y sus deps):
         "--collect-all", "google.genai",
+        "--collect-all", "httpx",
+        "--hidden-import", "httpx",
+        "--hidden-import", "httpcore",
+        "--hidden-import", "h11",
+        "--hidden-import", "sniffio",
+        "--hidden-import", "anyio",
+        # Voz en vivo (micrófono + audio):
+        "--collect-all", "sounddevice",
+        "--collect-all", "numpy",
         # icono opcional (descomenta cuando exista):
         # "--icon", str(ROOT/'assets'/'sentinel.ico'),
         str(ROOT / "run_sentinel.py"),

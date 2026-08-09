@@ -35,6 +35,9 @@ class ScanWorker(QThread):
         self._hard_score: int | None = None
         self._hard_last: float = 0.0
         self._hard_running: bool = False
+        # Persistencia avanzada (tareas, servicios, WMI, USB): tambien lenta,
+        # se refresca en el mismo ciclo que el blindaje.
+        self._deep_findings: list = []
         self._spoken: set = set()   # amenazas ya avisadas por voz
 
     def trigger(self) -> None:
@@ -75,6 +78,11 @@ class ScanWorker(QThread):
                 self._hard_last = time.monotonic()
             except Exception:
                 pass
+            try:
+                from sentinel.core.persistence import scan_persistence
+                self._deep_findings = scan_persistence()
+            except Exception:
+                pass
             finally:
                 self._hard_running = False
                 if not self._stop.is_set():
@@ -110,7 +118,7 @@ class ScanWorker(QThread):
     def _emit_report(self) -> None:
         from sentinel.core.brain import heuristic_summary
         report = full_scan(
-            extra_findings=self._hard_findings,
+            extra_findings=list(self._hard_findings) + list(self._deep_findings),
             hardening=self._hard_checks,
             hardening_score=self._hard_score,
         )

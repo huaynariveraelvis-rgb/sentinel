@@ -1,0 +1,23 @@
+# Normalizacion de fin de linea para un repo multiplataforma
+# (se desarrolla en Windows, el motor ofensivo corre en Linux/Kali).
+
+# Por defecto: Git decide texto/binario y normaliza a LF en el repo.
+* text=auto
+
+# Scripts de shell: SIEMPRE LF. Con CRLF, bash falla en Kali ("\r not found").
+*.sh   text eol=lf
+
+# Python: LF (uniforme en todas las plataformas).
+*.py   text eol=lf
+
+# Scripts de Windows: CRLF.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binarios: sin conversion.
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.exe  binary

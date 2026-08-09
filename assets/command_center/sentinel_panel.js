@@ -15,18 +15,25 @@
   const SEV_ICON = {
     CRITICA: "⛔", ALTA: "🔴", MEDIA: "🟠", BAJA: "🔵", INFO: "·",
   };
-  // Penalizacion por hallazgo para el puntaje (0–100).
-  const SEV_PENALTY = { CRITICA: 25, ALTA: 15, MEDIA: 7, BAJA: 1, INFO: 0 };
   const THREAT_LEVELS = new Set(["ALTA", "CRITICA"]);
 
   let bridge = null;
 
   const $ = (id) => document.getElementById(id);
 
-  function computeScore(findings) {
-    let score = 100;
-    for (const f of findings) score -= (SEV_PENALTY[f.severity_label] || 0);
-    return Math.max(0, Math.min(100, score));
+  /* El puntaje LO CALCULA EL MOTOR (core/hardening.py) sobre los 16 controles
+     de blindaje, y es el mismo numero que reporta la auditoria de consola.
+
+     Antes el panel calculaba uno propio restando puntos por cada hallazgo.
+     Eso daba dos numeros distintos para lo mismo (el motor decia 75 y el panel
+     mostraba 7) y castigaba el INVENTARIO: cada puerto a la escucha restaba,
+     asi que un equipo sano con muchos servicios parecia catastrofico.
+
+     Mientras el blindaje no ha terminado su primera pasada, el reporte aun no
+     trae puntaje: se muestra un guion en vez de inventar un numero. */
+  function engineScore(report) {
+    const s = report.hardening_score;
+    return (typeof s === "number" && isFinite(s)) ? s : null;
   }
 
   function scoreColor(score) {
@@ -36,27 +43,32 @@
   }
 
   function render(report) {
-    const findings = report.findings || [];
-    const counts = report.counts || {};
+    // Las amenazas RESUELTAS (protegidas por firewall) se quitan de la lista:
+    // así, al cerrar un puerto, el ítem DESAPARECE y se ve que SENTINEL actuó.
+    const findings = (report.findings || []).filter(
+      (f) => !(f.evidence && f.evidence.blocked));
     const maxSev = report.max_severity || "INFO";
 
-    // --- Puntaje ---
-    const score = computeScore(findings);
+    // --- Puntaje de blindaje (el del motor) ---
+    const score = engineScore(report);
     const scoreEl = $("spScore");
     if (scoreEl) {
-      scoreEl.textContent = score;
-      const c = scoreColor(score);
+      scoreEl.textContent = (score === null) ? "—" : score;
+      const c = (score === null) ? "#7fd9bf" : scoreColor(score);
       scoreEl.style.color = c;
       scoreEl.style.textShadow = `0 0 22px ${c}66`;
+      scoreEl.title = (score === null)
+        ? "Auditando el blindaje del sistema…"
+        : `${score} de 100 segun los 16 controles de blindaje`;
     }
 
-    // --- Resumen ---
-    const bs = (counts.por_severidad) || {};
+    // --- Resumen (cuenta solo lo NO resuelto) ---
+    const bs = {};
+    for (const f of findings) bs[f.severity_label] = (bs[f.severity_label] || 0) + 1;
     const sumEl = $("spSummary");
     if (sumEl) {
-      const total = counts.total != null ? counts.total : findings.length;
       sumEl.innerHTML =
-        `${total} hallazgos · ` +
+        `${findings.length} hallazgos · ` +
         `<b style="color:#ff5a78">${bs.ALTA || 0} altas</b> · ` +
         `<b style="color:#f59e0b">${bs.MEDIA || 0} medias</b> · ` +
         `${bs.BAJA || 0} bajas`;
@@ -101,7 +113,7 @@
     if (respEl) {
       if (report.summary) respEl.textContent = (isThreat ? "⚠ " : "") + report.summary;
       else if (isThreat) respEl.textContent = "⚠ Amenaza detectada. Revisá el panel.";
-      else if (score >= 80) respEl.textContent = "SENTINEL en línea. Sistema protegido.";
+      else if (score !== null && score >= 80) respEl.textContent = "SENTINEL en línea. Sistema protegido.";
       else respEl.textContent = "SENTINEL en línea. Hay puntos a revisar.";
     }
   }
@@ -111,19 +123,38 @@
     if (respEl) respEl.textContent = msg;
   }
 
+  // La consola de seguridad recibe los mismos datos que este panel. Se
+  // alimenta desde aqui para no tocar el cableado del Command Center
+  // heredado (app.js), que ya conecta las senales del puente a SentinelPanel.
+  const console_ = () => window.SentinelConsole;
+
   window.SentinelPanel = {
     setBridge(b) {
       bridge = b;
+      if (console_()) {
+        console_().setBridge(b);
+        // Senales propias de la consola: informe generado y salida de la terminal.
+        if (b && b.report_result) {
+          b.report_result.connect((j) => console_().onReport(j));
+        }
+        if (b && b.command_result) {
+          b.command_result.connect((j) => console_().onCommandResult(j));
+        }
+      }
       if (bridge && bridge.request_scan) bridge.request_scan();
     },
     onScan(json) {
-      try { render(JSON.parse(json)); }
-      catch (e) { console.error("SentinelPanel.onScan:", e); }
+      try {
+        const rep = JSON.parse(json);
+        render(rep);
+        if (console_()) console_().render(rep);
+      } catch (e) { console.error("SentinelPanel.onScan:", e); }
     },
     onFix(json) {
       try {
         const r = JSON.parse(json);
         flash(r.ok ? "✓ " + r.msg : "✗ " + r.msg);
+        if (console_()) console_().onFix(json);
       } catch (e) { console.error(e); }
     },
     onAnalysis(json) {
