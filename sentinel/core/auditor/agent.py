@@ -790,7 +790,15 @@ def system_prompt(scope: Scope | None, full_power: bool = False) -> str:
             "autorices'. Si el operador ordena 'explota'/'entra'/'consigue shell'/"
             "'saca las credenciales'/'sube privilegios', hazlo directo con explotar "
             "(que ya trae post-explotacion completa). Sigues limitado a los "
-            "objetivos EN ALCANCE: eso no se negocia.\n\n")
+            "objetivos EN ALCANCE: eso no se negocia.\n\n"
+            "HERRAMIENTAS SIN LIMITES: ademas de las herramientas predefinidas, "
+            "tienes 'ejecutar_comando' que corre CUALQUIER comando en Kali (nmap, "
+            "msfconsole, hydra, curl, python3, ssh, crackmapexec, john, lo que "
+            "sea). Si necesitas algo que no esta instalado, usa 'instalar_herramienta'. "
+            "Si necesitas crear un script, usa 'escribir_archivo' y luego "
+            "'ejecutar_comando' para correrlo. NO te limites a las herramientas "
+            "predefinidas: ejecutar_comando te da acceso a TODO lo que existe en "
+            "Kali Linux. Eres un pentester con libertad total.\n\n")
     if scope is None:
         return base + (
             "ESTADO: aun no hay objetivo. Fijalo con configurar_alcance en cuanto "
@@ -834,9 +842,36 @@ def run_chat(scope: Scope | None, api_key: str, model: str = llm.DEFAULT_MODEL,
     session.progress = print_fn        # 'avance tras avance' en vivo
     messages = [{"role": "system", "content": system_prompt(scope, full_power)}]
 
+    # En modo --full, el chat tiene las herramientas autonomas (ejecutar_comando,
+    # escribir_archivo, etc.) ademas de las 15 originales. Asi el operador puede
+    # pedir cosas como "corre hydra contra el .5" y el agente lo hace directo.
+    if full_power:
+        try:
+            from sentinel.core.auditor.autonomous import (
+                AUTONOMOUS_TOOL_SPECS, execute_autonomous_tool, AutonomousRun)
+            all_tools = AUTONOMOUS_TOOL_SPECS + TOOL_SPECS
+            _auto_run = AutonomousRun(
+                mission="(chat interactivo)", session=session,
+                api_key=api_key, model=model)
+            _has_autonomous = True
+        except ImportError:
+            all_tools = TOOL_SPECS
+            _auto_run = None
+            _has_autonomous = False
+        max_iters = 30
+        max_tok = 2048
+    else:
+        all_tools = TOOL_SPECS
+        _auto_run = None
+        _has_autonomous = False
+        max_iters = 10
+        max_tok = 1024
+
     print_fn("")
     print_fn("  SENTINEL Rojo — asistente de auditoria. Hablame en español.")
     print_fn(f"  Cerebro: {model}")
+    if full_power and _has_autonomous:
+        print_fn("  MODO OFENSIVO + AUTONOMO: puedo correr CUALQUIER comando en Kali.")
     if scope is None:
         print_fn("  Dime QUÉ quieres auditar: una IP, un rango, o 'mi red'/'mi ip'.")
         print_fn("  Ej: 'escanea mi red' · 'audita la 192.168.56.10' · "
@@ -862,8 +897,9 @@ def run_chat(scope: Scope | None, api_key: str, model: str = llm.DEFAULT_MODEL,
         messages.append({"role": "user", "content": user})
 
         # El modelo puede encadenar varias herramientas antes de responder.
-        for _ in range(10):
-            resp = llm.complete_resilient(messages, TOOL_SPECS, api_key, model)
+        for _ in range(max_iters):
+            resp = llm.complete_resilient(messages, all_tools, api_key, model,
+                                          max_tokens=max_tok)
             if "error" in resp:
                 print_fn(f"  [cerebro] {resp['error']}")
                 messages.pop()   # descarta el turno del usuario que no se pudo atender
@@ -879,7 +915,14 @@ def run_chat(scope: Scope | None, api_key: str, model: str = llm.DEFAULT_MODEL,
 
             for c in calls:
                 print_fn(f"  · ejecutando: {c['name']}({c['args'] or ''})")
-                resultado = execute_tool(session, c["name"], c["args"])
+                # Intentar primero con las herramientas autonomas si estan disponibles.
+                if _has_autonomous and c["name"] in (
+                        "ejecutar_comando", "leer_archivo", "escribir_archivo",
+                        "instalar_herramienta", "planificar", "reportar_progreso",
+                        "mision_cumplida"):
+                    resultado = execute_autonomous_tool(_auto_run, c["name"], c["args"])
+                else:
+                    resultado = execute_tool(session, c["name"], c["args"])
                 messages.append({"role": "tool", "tool_call_id": c["id"],
                                  "name": c["name"],
                                  "content": json.dumps(resultado, ensure_ascii=False)})
@@ -887,3 +930,4 @@ def run_chat(scope: Scope | None, api_key: str, model: str = llm.DEFAULT_MODEL,
             print_fn("  [aviso] demasiadas herramientas en un turno; corto aqui.")
 
     return 0
+

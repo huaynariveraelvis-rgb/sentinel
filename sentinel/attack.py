@@ -398,6 +398,36 @@ def _exportar_json(scope, findings: list[Finding], targets: dict,
     return ruta
 
 
+# ── Modo AUTONOMO (SENTINEL Rojo sin supervision) ────────────────────────────
+
+def cmd_autonomo(scope_path: str | None, mision: str, out_dir: str,
+                 modelo_cli: str | None, full: bool = True) -> int:
+    from sentinel.core.auditor.autonomous import run_autonomous
+    scope = None
+    if scope_path:
+        try:
+            scope = load_scope(scope_path)
+        except ScopeError as e:
+            _head("SENTINEL Rojo AUTONOMO")
+            print(f"  ALCANCE INVALIDO: {e}")
+            print()
+            return 2
+    key, modelo = _resolver_llm()
+    if modelo_cli:
+        modelo = modelo_cli
+    if not key:
+        _head("SENTINEL Rojo AUTONOMO")
+        print("  Falta la clave del cerebro (OpenRouter).")
+        print("  En Kali:  export OPENROUTER_API_KEY=sk-or-...")
+        print("  O ponla en config/settings.json -> ai.openrouter_api_key")
+        print()
+        return 4
+    result = run_autonomous(
+        mission=mision, scope=scope, api_key=key, model=modelo,
+        out_dir=out_dir, full_power=full)
+    return 0 if result.get("exito") else 1
+
+
 # ── Entrada ──────────────────────────────────────────────────────────────────
 
 def main(argv: list[str] | None = None) -> int:
@@ -420,13 +450,27 @@ def main(argv: list[str] | None = None) -> int:
                     help="Modo conversacional (SENTINEL Rojo): le hablas y el "
                          "audita. Necesita OPENROUTER_API_KEY. --scope es "
                          "opcional: sin el, te pregunta que auditar y a quien.")
+    ap.add_argument("--autonomo", action="store_true",
+                    help="Modo AUTONOMO: SENTINEL Rojo opera SOLO, sin pedir "
+                         "input. Le das una mision (--mision) y el hace todo: "
+                         "planifica, reconoce, enumera, explota, pivotea, y al "
+                         "final envia el reporte por correo. Puede correr "
+                         "CUALQUIER comando en Kali. --scope es opcional.")
+    ap.add_argument("--mision", metavar="TEXTO",
+                    default="Auditoria ofensiva completa: descubre donde estas, "
+                            "reconoce la red, enumera servicios, encuentra "
+                            "vulnerabilidades, explota lo que puedas, escala "
+                            "privilegios, pivotea si es posible, y al final "
+                            "envia el reporte completo por correo al operador.",
+                    help="Texto libre con la mision del agente autonomo. "
+                         "Ej: 'sal de aqui y avisame como lo hiciste'.")
     ap.add_argument("--modelo", metavar="MODELO",
                     help="Modelo del cerebro en OpenRouter (ej. "
                          "google/gemini-2.5-flash, anthropic/claude-3.5-sonnet).")
     ap.add_argument("--full", action="store_true",
                     help="Modo OFENSIVO: pre-autoriza la explotacion en esta "
                          "sesion (no hay que decir 'autorizo'). Sigue limitado al "
-                         "alcance. Solo con --chat.")
+                         "alcance. Solo con --chat o --autonomo.")
     ap.add_argument("--exploit-scripts", dest="exploit_scripts",
                     action="store_true",
                     help="Si el alcance autoriza 'exploit', PREPARA scripts .rc de "
@@ -439,6 +483,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.arsenal:
         return cmd_arsenal()
+    if args.autonomo:
+        return cmd_autonomo(args.scope, mision=args.mision, out_dir=args.salida,
+                            modelo_cli=args.modelo, full=args.full)
     if args.chat:
         return cmd_chat(args.scope, out_dir=args.salida, modelo_cli=args.modelo,
                         full=args.full)
@@ -456,8 +503,14 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print("  Ejemplo:  python -m sentinel.attack --verificar --scope alcance.json")
     print()
+    print("  Modo autonomo (sin supervision):")
+    print("    python -m sentinel.attack --autonomo --full --scope alcance.json")
+    print("    python -m sentinel.attack --autonomo --full \\")
+    print("        --mision 'sal de aqui y avisame como lo hiciste'")
+    print()
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
