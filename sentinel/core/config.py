@@ -177,6 +177,9 @@ _DEFAULTS = {
            "openrouter_model": "openrouter/free"},
     "analysis": {"virustotal_api_key": ""},
     "voice": {"enabled": False, "alert_on_severity": "ALTA"},
+    # Aviso por correo al operador (entrega de informe). Gmail: usar App Password.
+    "notify": {"smtp_host": "", "smtp_port": 587, "smtp_user": "",
+               "smtp_password": "", "email_to": ""},
 }
 
 

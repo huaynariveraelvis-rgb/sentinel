@@ -28,7 +28,7 @@ from sentinel.core.monitor import Finding, Severity
 from sentinel.core.auditor.scope import Scope, ScopeError, build_scope
 from sentinel.core.auditor import recon, enum, vuln, exploit, toolkit
 from sentinel.core.auditor.targets import derive_targets, is_web, is_tls, is_smb
-from sentinel.core import llm
+from sentinel.core import llm, notify
 
 
 # ── Estado de la sesion ───────────────────────────────────────────────────────
@@ -108,7 +108,10 @@ TOOL_SPECS = [
                                    "operador dice 'mi ip'/'mi red'/'esta maquina', "
                                    "obtenlos antes con detectar_red_local."},
         "allowed_phases": {"type": "array", "items": {"type": "string"},
-                           "description": "Fases: recon, enum, vuln. Omitir = las tres."},
+                           "description": "Fases autorizadas: recon, enum, vuln, y "
+                           "'exploit' SOLO si el operador autoriza explotar de forma "
+                           "expresa (ej. 'con explotacion', 'quiero entrar'). Omitir "
+                           "= recon+enum+vuln (sin explotacion)."},
         "engagement": {"type": "string", "description": "Nombre corto del trabajo (opcional)."},
         "excludes": {"type": "array", "items": {"type": "string"},
                      "description": "IPs a NO tocar aunque caigan en el rango (opcional)."},
@@ -149,6 +152,21 @@ TOOL_SPECS = [
        "Metasploit (con el 'run' comentado) para revision manual del operador. "
        "No dispara ningun exploit.",
        _IP, ["ip"]),
+    _t("explotar",
+       "EJECUTA la explotacion con Metasploit contra un equipo AUTORIZADO y en "
+       "alcance (solo si la fase 'exploit' esta autorizada). Corre el modulo, "
+       "intenta abrir sesion (meterpreter/shell) y hace post-explotacion basica "
+       "(sysinfo, getuid, hashdump). Usalo cuando el operador diga 'explota'/"
+       "'entra'/'consigue shell'. Si no das 'modulo', se elige por el servicio.",
+       {"ip": {"type": "string", "description": "Objetivo (en alcance)."},
+        "modulo": {"type": "string", "description": "Modulo Metasploit (opcional; "
+                   "si falta, se sugiere por el servicio del equipo)."}},
+       ["ip"]),
+    _t("avisar_por_correo",
+       "Envia al operador (a SU correo configurado) un aviso con el resumen de la "
+       "auditoria. Es entrega de informe/notificacion, no exfiltracion. Usalo si "
+       "el operador pide 'avisame'/'mandame al correo'/'notificame'.",
+       {"asunto": {"type": "string", "description": "Asunto (opcional)."}}),
     _t("arsenal",
        "Lista que herramientas de Kali estan instaladas y cuales faltan."),
 ]
@@ -268,7 +286,83 @@ def _dispatch(session: AuditorSession, name: str, args: dict) -> dict:
         return {"equipo": ip, "scripts": generados or "sin modulos sugeridos",
                 "nota": "REVISAR a mano; el 'run' va comentado. msfconsole -r <archivo>"}
 
+    if name == "explotar":
+        return _explotar(session, args)
+
+    if name == "avisar_por_correo":
+        return _avisar(session, args)
+
     return {"error": f"herramienta desconocida: {name}"}
+
+
+def _explotar(session: AuditorSession, args: dict) -> dict:
+    scope = session.scope
+    ip = str(args.get("ip", "")).strip()
+    if not scope.phase_allowed("exploit"):
+        return {"error": "el alcance NO autoriza la fase 'exploit'. Pide al "
+                         "operador que la autorice (es un candado a proposito)."}
+    if not exploit.msf_available():
+        return {"error": "Metasploit (msfconsole) no esta instalado. "
+                         "En Kali: sudo apt install metasploit-framework."}
+    err = _ensure_host(session, ip)
+    if err:
+        return {"error": err}
+
+    modulo = (args.get("modulo") or "").strip()
+    puerto = None
+    if not modulo:
+        for e in session.targets.get(ip, []):
+            sugeridos = exploit.suggest_modules(e["svc"], e.get("banner", ""))
+            expl = [m for m in sugeridos if m.startswith("exploit/")]
+            if expl:
+                modulo, puerto = expl[0], e["port"]
+                break
+        if not modulo:
+            return {"error": f"no tengo un modulo de explotacion sugerido para los "
+                             f"servicios de {ip}. Enumera/busca_vulnerabilidades "
+                             f"primero, o dame un modulo Metasploit concreto."}
+
+    session.say(f"  [exploit] {ip}: lanzando {modulo} con Metasploit...")
+    try:
+        hallazgo, salida = exploit.run_msf(scope, modulo, ip, rport=puerto, post=True)
+    except ScopeError as e:
+        return {"error": str(e)}
+    if hallazgo:
+        session.add_findings([hallazgo])
+        estado = hallazgo.severity.label
+        session.say(f"            resultado: {hallazgo.title}")
+    else:
+        estado = "sin sesion / no explotable"
+        session.say(f"            resultado: sin sesion (no explotable con {modulo})")
+    return {"equipo": ip, "modulo": modulo, "resultado": estado,
+            "detalle": hallazgo.title if hallazgo else "no se abrio sesion",
+            "salida_msf": (salida or "")[:1500]}
+
+
+def _avisar(session: AuditorSession, args: dict) -> dict:
+    from sentinel.core.config import load_settings
+    cfg = (load_settings().get("notify") or {})
+    if not notify.configured(cfg):
+        return {"error": "el correo no esta configurado. Pon notify.smtp_host/"
+                         "smtp_user/smtp_password (y email_to) en config/settings.json. "
+                         "Gmail: usa una App Password."}
+    conteo = _conteo(session.findings)
+    eng = session.scope.engagement if session.scope else "auditoria"
+    relevantes = sorted([f for f in session.findings if f.severity >= Severity.MEDIUM],
+                        key=lambda f: int(f.severity), reverse=True)
+    cuerpo = [f"SENTINEL Rojo — aviso de auditoria", f"Engagement: {eng}",
+              f"Objetivos: {', '.join(session.scope.targets) if session.scope else '-'}",
+              "",
+              f"Hallazgos: {len(session.findings)}  "
+              f"(CRITICA {conteo['CRITICA']}, ALTA {conteo['ALTA']}, "
+              f"MEDIA {conteo['MEDIA']})", ""]
+    for f in relevantes[:20]:
+        cuerpo.append(f"  [{f.severity.label}] {f.title}"
+                      + (f"  ({f.attack})" if f.attack else ""))
+    asunto = str(args.get("asunto") or f"SENTINEL Rojo — {eng}")
+    ok, msg = notify.send_email(cfg, asunto, "\n".join(cuerpo))
+    session.say(f"  [aviso] {msg}")
+    return {"enviado": ok, "detalle": msg}
 
 
 def _detectar_red_local() -> dict:
@@ -449,6 +543,13 @@ def _auditoria_completa(session: AuditorSession) -> dict:
 
     ruta = _guardar_json(session, fases)
     session.say(f"  == Auditoria terminada. Evidencia: {ruta} ==")
+    # Aviso automatico al operador si tiene el correo configurado.
+    try:
+        from sentinel.core.config import load_settings
+        if notify.configured(load_settings().get("notify") or {}):
+            _avisar(session, {"asunto": f"SENTINEL Rojo — {scope.engagement}"})
+    except Exception:
+        pass
     session.say("")
     return {"fases": fases, "conteo": _conteo(session.findings),
             "total_equipos": len(session.targets),
@@ -491,9 +592,10 @@ def system_prompt(scope: Scope | None) -> str:
         "2. OBEDECE PASO A PASO: haz EXACTAMENTE lo que te pide, ni mas ni menos, "
         "un paso por vez. 'escanea/reconoce el .5' -> escanear_equipo; 'enumera "
         "el .5' -> enumerar; 'busca vulns en el .10' -> buscar_vulnerabilidades; "
-        "'reconoce la red' -> reconocer. Corre auditoria_completa SOLO si pide "
-        "'todo/completo/auditalo entero'. NO te adelantes a fases que no te "
-        "pidieron.\n"
+        "'reconoce la red' -> reconocer; 'explota/entra/consigue shell en el .5' -> "
+        "explotar (requiere fase 'exploit' autorizada); 'avisame/mandame al correo' "
+        "-> avisar_por_correo. Corre auditoria_completa SOLO si pide 'todo/"
+        "completo/auditalo entero'. NO te adelantes a fases que no te pidieron.\n"
         "3. NARRA CADA AVANCE, como un operador humano al lado: antes de actuar di "
         "en UNA linea que vas a hacer y por que; ejecuta la herramienta (su avance "
         "se muestra en vivo); al terminar reporta el resultado de ESE paso; y "
@@ -525,10 +627,15 @@ def system_prompt(scope: Scope | None) -> str:
         "- NUNCA muestres tu razonamiento interno, deliberaciones ni texto en "
         "ingles. Nada de 'We need to...' ni 'The user says...'. Responde DIRECTO al "
         "operador: la accion y su resultado, en espanol y conciso.\n"
-        "- Tu alcance es AUDITAR (recon/enum/vuln) y preparar scripts de "
-        "explotacion para revision humana. NO ejecutas post-explotacion en vivo, "
-        "NO abres shells reales, NO envias correos ni exfiltras datos. Si te lo "
-        "piden, explica que preparas el material pero el disparo es manual.\n\n"
+        "- EXPLOTACION: si (y solo si) el alcance autoriza la fase 'exploit', "
+        "puedes EJECUTAR con Metasploit ('explota'/'entra'/'consigue shell' -> "
+        "explotar), que abre sesion y hace post-explotacion basica sobre el "
+        "objetivo AUTORIZADO y en alcance. Si la fase 'exploit' no esta autorizada, "
+        "solo preparas el script (preparar_exploit) para revision manual. Nunca "
+        "explotas fuera de alcance.\n"
+        "- No escribes C2/implantes propios: usas Metasploit/Meterpreter (estandar). "
+        "El 'correo' es un AVISO al operador con el resumen (avisar_por_correo), "
+        "entrega de informe, jamas exfiltracion de datos de terceros.\n\n"
         "INTERPRETA el objetivo sin fastidiar con preguntas:\n"
         "- 'escanea mi ip'/'mi red'/'esta maquina'/'aqui'/'esto'/'donde estas'/"
         "'sal de aqui' -> el objetivo es la red local: llama detectar_red_local "
