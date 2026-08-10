@@ -28,12 +28,19 @@ DEFAULT_MODEL = "google/gemini-2.5-flash"
 
 def complete(messages: list[dict], tools: list[dict] | None, api_key: str,
              model: str = DEFAULT_MODEL, timeout: int = 180,
-             url: str = OPENROUTER_URL, temperature: float = 0.2) -> dict:
-    """Una vuelta de chat. Devuelve el mensaje del asistente o un error."""
+             url: str = OPENROUTER_URL, temperature: float = 0.2,
+             max_tokens: int = 1024) -> dict:
+    """Una vuelta de chat. Devuelve el mensaje del asistente o un error.
+
+    `max_tokens` se limita a proposito: sin tope, OpenRouter reserva el maximo
+    del modelo (decenas de miles de tokens) y una cuenta con poco saldo recibe
+    HTTP 402 aunque la respuesta real sea corta. 1024 basta para respuestas
+    concisas y cabe en saldos pequenos."""
     if not api_key:
         return {"error": "falta la clave del LLM (OPENROUTER_API_KEY)."}
 
-    body: dict = {"model": model, "messages": messages, "temperature": temperature}
+    body: dict = {"model": model, "messages": messages,
+                  "temperature": temperature, "max_tokens": max_tokens}
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"
