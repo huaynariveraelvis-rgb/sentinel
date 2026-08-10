@@ -29,6 +29,12 @@ Uso tipico:
       Si el alcance autoriza 'exploit', PREPARA scripts .rc de Metasploit (con el
       'run' comentado) para que el operador los revise y ejecute a mano. No
       dispara nada.
+
+  export OPENROUTER_API_KEY=sk-or-...
+  python -m sentinel.attack --chat --scope alcance.json
+      SENTINEL Rojo: le HABLAS en español ("reconoce el alcance", "audita todo")
+      y el orquesta el Auditor. El cerebro (LLM via OpenRouter) decide que
+      herramienta usar; el guardian de alcance sigue entre el modelo y la red.
 """
 from __future__ import annotations
 
@@ -42,16 +48,9 @@ from sentinel import __product__, __vendor__, __version__
 from sentinel.core.monitor import Finding, Severity
 from sentinel.core.auditor.scope import load_scope, ScopeError
 from sentinel.core.auditor import recon, enum, vuln, toolkit, exploit
+from sentinel.core.auditor.targets import derive_targets, is_web, is_tls, is_smb
 
 _LINE = "-" * 68
-
-# Puertos/servicios que disparan cada tipo de enumeracion.
-_WEB_SVCS = {"http", "https", "http-proxy", "http-alt", "https-alt", "ssl/http"}
-_WEB_PORTS = {80, 443, 8080, 8443, 8000, 8888, 8443}
-_SMB_SVCS = {"microsoft-ds", "netbios-ssn"}
-_SMB_PORTS = {445, 139}
-_TLS_PORTS = {443, 8443}
-_TLS_SVCS = {"https", "https-alt", "ssl/http"}
 
 
 def _utf8() -> None:
@@ -66,73 +65,6 @@ def _head(subtitulo: str) -> None:
     print(f"  {__product__} Auditor  ·  {subtitulo}")
     print(f"  {__vendor__}  ·  v{__version__}")
     print(f"  {_LINE}")
-
-
-# ── Objetivos derivados del reconocimiento ────────────────────────────────────
-
-def _parse_port_str(s: str) -> tuple[int, str, str]:
-    """Interpreta '80/http (Apache 2.4)' -> (80, 'http', 'Apache 2.4')."""
-    s = (s or "").strip()
-    partes = s.split(" ", 1)
-    izq = partes[0]
-    banner = partes[1].strip().strip("()") if len(partes) > 1 else ""
-    if "/" in izq:
-        num, svc = izq.split("/", 1)
-    else:
-        num, svc = izq, ""
-    try:
-        port = int(num)
-    except ValueError:
-        port = 0
-    return port, svc.lower(), banner
-
-
-def _add_port(lst: list[dict], port, svc: str, banner: str) -> None:
-    try:
-        p = int(port)
-    except (ValueError, TypeError):
-        return
-    for e in lst:
-        if e["port"] == p:
-            if banner and not e.get("banner"):
-                e["banner"] = banner
-            return
-    lst.append({"port": p, "svc": (svc or "").lower(), "banner": banner or ""})
-
-
-def _derive_targets(findings: list[Finding]) -> dict[str, list[dict]]:
-    """A partir de los hallazgos de recon, arma {ip: [{port, svc, banner}, ...]}.
-
-    Es el mapa que guia la enumeracion y la deteccion de vulnerabilidades: solo
-    se sondean los puertos que el reconocimiento ya encontro abiertos.
-    """
-    hosts: dict[str, list[dict]] = {}
-    for f in findings:
-        ev = f.evidence or {}
-        ip = ev.get("equipo")
-        if not ip:
-            continue
-        if f.category == "exposicion" and ev.get("puerto"):
-            _add_port(hosts.setdefault(ip, []), ev.get("puerto"),
-                      ev.get("servicio", ""), ev.get("version", ""))
-        elif f.category == "recon" and ev.get("puertos"):
-            lst = hosts.setdefault(ip, [])
-            for s in ev["puertos"]:
-                port, svc, banner = _parse_port_str(s)
-                _add_port(lst, port, svc, banner)
-    return hosts
-
-
-def _is_web(e: dict) -> bool:
-    return e["svc"] in _WEB_SVCS or e["port"] in _WEB_PORTS
-
-
-def _is_tls(e: dict) -> bool:
-    return e["svc"] in _TLS_SVCS or e["port"] in _TLS_PORTS
-
-
-def _is_smb(e: dict) -> bool:
-    return e["svc"] in _SMB_SVCS or e["port"] in _SMB_PORTS
 
 
 # ── Encabezado del alcance ────────────────────────────────────────────────────
@@ -272,7 +204,7 @@ def cmd_auditar(scope_path: str, fases_pedidas: list[str] | None,
         print()
         return 6
     findings.extend(recon_f)
-    targets = _derive_targets(recon_f)
+    targets = derive_targets(recon_f)
     print(f"      {len(targets)} equipo(s) con puertos abiertos en el alcance.")
 
     # [2] ENUMERACION
@@ -282,13 +214,13 @@ def cmd_auditar(scope_path: str, fases_pedidas: list[str] | None,
         for ip in sorted(targets):
             ports = targets[ip]
             for e in ports:
-                if _is_web(e):
+                if is_web(e):
                     _safe(findings, f"      web {ip}:{e['port']} (whatweb/nikto)",
                           lambda e=e, ip=ip: enum.enum_web(scope, ip, e["port"]))
-                    if _is_tls(e):
+                    if is_tls(e):
                         _safe(findings, f"      tls {ip}:{e['port']} (sslscan)",
                               lambda e=e, ip=ip: enum.enum_tls(scope, ip, e["port"]))
-            if any(_is_smb(e) for e in ports):
+            if any(is_smb(e) for e in ports):
                 _safe(findings, f"      smb {ip} (enum4linux/smbmap)",
                       lambda ip=ip: enum.enum_smb(scope, ip))
 
@@ -301,7 +233,7 @@ def cmd_auditar(scope_path: str, fases_pedidas: list[str] | None,
             _safe(findings, f"      nmap NSE vuln {ip}",
                   lambda ip=ip: vuln.scan_vulns_nmap(scope, ip))
             for e in ports:
-                if _is_web(e):
+                if is_web(e):
                     _safe(findings, f"      nuclei {ip}:{e['port']}",
                           lambda e=e, ip=ip: vuln.scan_vulns_nuclei(scope, ip, e["port"]))
                 if e.get("banner"):
@@ -319,6 +251,44 @@ def cmd_auditar(scope_path: str, fases_pedidas: list[str] | None,
         print(f"  Evidencia JSON: {ruta}")
     print()
     return 0
+
+
+# ── Modo conversacional (SENTINEL Rojo) ───────────────────────────────────────
+
+def _resolver_llm() -> tuple[str, str]:
+    """Devuelve (api_key, modelo) desde variables de entorno o settings.json.
+    La variable de entorno manda (comodo en Kali: export OPENROUTER_API_KEY=...)."""
+    import os
+    from sentinel.core.config import load_settings
+    cfg = (load_settings().get("ai") or {})
+    key = os.environ.get("OPENROUTER_API_KEY") or cfg.get("openrouter_api_key", "")
+    modelo = (os.environ.get("SENTINEL_LLM_MODEL")
+              or cfg.get("openrouter_model") or "google/gemini-2.5-flash")
+    return key, modelo
+
+
+def cmd_chat(scope_path: str, out_dir: str, modelo_cli: str | None) -> int:
+    from sentinel.core.auditor import agent
+    try:
+        scope = load_scope(scope_path)
+    except ScopeError as e:
+        _head("SENTINEL Rojo")
+        print(f"  ALCANCE INVALIDO: {e}")
+        print()
+        return 2
+    key, modelo = _resolver_llm()
+    if modelo_cli:
+        modelo = modelo_cli
+    if not key:
+        _head("SENTINEL Rojo")
+        print("  Falta la clave del cerebro (OpenRouter).")
+        print("  En Kali:  export OPENROUTER_API_KEY=sk-or-...")
+        print("  O ponla en config/settings.json -> ai.openrouter_api_key")
+        print()
+        return 4
+    _head(f"SENTINEL Rojo — {scope.engagement}")
+    _print_scope(scope)
+    return agent.run_chat(scope, key, modelo, out_dir=out_dir)
 
 
 def _safe(acc: list[Finding], etiqueta: str, fn) -> None:
@@ -435,6 +405,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="Valida el alcance y el arsenal. No toca ningun equipo.")
     ap.add_argument("--arsenal", action="store_true",
                     help="Lista el catalogo de herramientas y si estan instaladas.")
+    ap.add_argument("--chat", action="store_true",
+                    help="Modo conversacional (SENTINEL Rojo): le hablas y el "
+                         "audita. Necesita --scope y OPENROUTER_API_KEY.")
+    ap.add_argument("--modelo", metavar="MODELO",
+                    help="Modelo del cerebro en OpenRouter (ej. "
+                         "google/gemini-2.5-flash, anthropic/claude-3.5-sonnet).")
     ap.add_argument("--exploit-scripts", dest="exploit_scripts",
                     action="store_true",
                     help="Si el alcance autoriza 'exploit', PREPARA scripts .rc de "
@@ -447,6 +423,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.arsenal:
         return cmd_arsenal()
+    if args.chat:
+        if not args.scope:
+            ap.error("--chat necesita --scope alcance.json")
+        return cmd_chat(args.scope, out_dir=args.salida, modelo_cli=args.modelo)
     if args.verificar:
         return cmd_verificar(args.scope)
     if args.scope:

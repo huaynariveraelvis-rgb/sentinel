@@ -95,5 +95,9 @@ cat <<'PASOS'
   # 4) Auditar SOLO cuando el alcance este autorizado por escrito:
   python -m sentinel.attack --scope alcance.json
 
+  # 5) SENTINEL Rojo (le hablas y el audita). Necesita clave de OpenRouter:
+  export OPENROUTER_API_KEY=sk-or-...
+  python -m sentinel.attack --chat --scope alcance.json
+
 Recuerda: sin un alcance valido, el Auditor no escanea nada (falla cerrado).
 PASOS

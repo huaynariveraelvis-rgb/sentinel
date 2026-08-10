@@ -171,7 +171,9 @@ _DEFAULTS = {
     "theme": "guardian",
     "scan": {"auto_interval_seconds": 60, "watch_processes": True,
              "watch_network": True, "watch_autoruns": True},
-    "ai": {"gemini_api_key": "", "enabled": False},
+    "ai": {"gemini_api_key": "", "enabled": False,
+           # SENTINEL Rojo (Auditor conversacional): cerebro via OpenRouter.
+           "openrouter_api_key": "", "openrouter_model": "google/gemini-2.5-flash"},
     "analysis": {"virustotal_api_key": ""},
     "voice": {"enabled": False, "alert_on_severity": "ALTA"},
 }
