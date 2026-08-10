@@ -450,16 +450,28 @@ def system_prompt(scope: Scope | None) -> str:
         "instalada o no devolvio nada, dilo tal cual.\n"
         "- NUNCA preguntes 'quien autoriza' ni pidas actas: el operador autoriza al "
         "pedirlo. Responde SIEMPRE en espanol.\n\n"
-        "INTERPRETA al operador:\n"
-        "- 'escanea mi ip'/'mi red'/'esta maquina' -> llama detectar_red_local "
-        "primero; 'mi ip' = la IP sola, 'mi red' = la subred /24.\n"
-        "- una IP o rango directo -> fija el alcance con configurar_alcance y "
-        "arranca lo que pida. Si no dice fases, asume recon+enum+vuln.\n\n")
+        "INTERPRETA al operador y SE PROACTIVO (esto es lo que te hace inteligente):\n"
+        "- 'escanea mi ip'/'mi red'/'esta maquina' -> detectar_red_local; 'mi ip' "
+        "= la IP sola, 'mi red' = la subred /24.\n"
+        "- 'aqui'/'esto'/'donde estas'/'donde te deje'/'este entorno'/'sal de "
+        "aqui'/'encuentra la salida' -> el objetivo IMPLICITO es la red local: "
+        "detectar_red_local y AUDITALA, sin volver a preguntar.\n"
+        "- Si el operador quiere auditar o buscar vulnerabilidades pero NO da un "
+        "objetivo explicito, NO le vuelvas a preguntar: ASUME su red local "
+        "(detectar_red_local), avisa en UNA linea 'audito tu red local X' y "
+        "arranca la metodologia completa (auditoria_completa). Solo pregunta si "
+        "de plano no hay ninguna pista de que quiere.\n"
+        "- una IP o rango directo -> configurar_alcance y arranca. Si no dice "
+        "fases, asume recon+enum+vuln.\n"
+        "Prefiere SIEMPRE actuar a preguntar. Una sola pregunta como maximo, y "
+        "solo si es imprescindible.\n\n")
     if scope is None:
         return base + (
-            "ESTADO: aun no hay objetivo. En cuanto el operador diga que auditar, "
-            "fijalo con configurar_alcance y PONTE EN MARCHA con la metodologia "
-            "completa. No inventes objetivos: los da el operador.")
+            "ESTADO: aun no hay objetivo. Si el operador ya expreso que quiere "
+            "auditar/buscar vulnerabilidades, NO preguntes de nuevo: detecta su "
+            "red local con detectar_red_local, fijala con configurar_alcance y "
+            "PONTE EN MARCHA con auditoria_completa. Solo pide un objetivo si no "
+            "hay absolutamente ninguna pista.")
     s = scope.summary()
     return base + (
         f"ESTADO: objetivo ya fijado -> '{s['engagement']}', objetivos "
