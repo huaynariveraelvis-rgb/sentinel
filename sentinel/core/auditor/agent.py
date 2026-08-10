@@ -168,6 +168,16 @@ TOOL_SPECS = [
        "auditoria. Es entrega de informe/notificacion, no exfiltracion. Usalo si "
        "el operador pide 'avisame'/'mandame al correo'/'notificame'.",
        {"asunto": {"type": "string", "description": "Asunto (opcional)."}}),
+    _t("operacion_autonoma",
+       "Operacion AUTONOMA de punta a punta: SENTINEL Rojo hace TODO solo contra el "
+       "objetivo autorizado — recon, enumeracion, vulnerabilidades y, si la fase "
+       "'exploit' esta autorizada, intrusion + emulacion de adversario ATT&CK "
+       "(evasion, persistencia, lateral) — sin guia paso a paso. Usalo cuando el "
+       "operador diga 'hazlo todo tu solo', 'ataca solo', 'operacion autonoma', "
+       "'completo y autonomo'. Con 'ip' opera ese host; sin ella, TODA la red del "
+       "alcance. Devuelve el scorecard para medir al defensivo.",
+       {"ip": {"type": "string", "description": "Objetivo (opcional; vacio = toda "
+               "la red del alcance)."}}),
     _t("tecnicas_adversario",
        "Lista el catalogo de tecnicas de emulacion de adversario (post-explotacion "
        "y evasion) mapeadas a MITRE ATT&CK, para saber que se puede ejercitar."),
@@ -312,6 +322,9 @@ def _dispatch(session: AuditorSession, name: str, args: dict) -> dict:
     if name == "emular_adversario":
         return _emular_adversario(session, args)
 
+    if name == "operacion_autonoma":
+        return _operacion_autonoma(session, args)
+
     if name == "avisar_por_correo":
         return _avisar(session, args)
 
@@ -409,6 +422,47 @@ def _explotar(session: AuditorSession, args: dict) -> dict:
     return {"equipo": ip, "modulo": modulo, "resultado": estado,
             "detalle": hallazgo.title if hallazgo else "no se abrio sesion",
             "salida_msf": (salida or "")[:1500]}
+
+
+def _operacion_autonoma(session: AuditorSession, args: dict) -> dict:
+    """Cadena COMPLETA autonoma contra el/los objetivo(s): recon -> enum -> vuln
+    -> (si 'exploit' autorizado + Metasploit) intrusion + emulacion de adversario.
+    El operador solo da la orden; el agente encadena todo solo y mide."""
+    scope = session.scope
+    if not recon.nmap_available():
+        return {"error": "nmap no esta instalado (sudo apt install nmap)."}
+    ip = str(args.get("ip", "")).strip()
+    session.say("")
+    session.say(f"  ===== OPERACION AUTONOMA: {ip or ', '.join(scope.targets)} =====")
+
+    if ip:
+        err = _ensure_host(session, ip)
+        if err:
+            return {"error": err}
+        objetivos = [ip]
+    else:
+        _recon_con_avance(session)          # descubre y escanea toda la red del alcance
+        objetivos = sorted(session.targets)
+    if not objetivos:
+        return {"error": "no encontre equipos vivos en el alcance."}
+
+    resumen = []
+    for host in objetivos:
+        session.say(f"  --- objetivo {host} ---")
+        _enumerar_con_avance(session, host)
+        _vulns_con_avance(session, host)
+        entro = False
+        if scope.phase_allowed("exploit") and exploit.msf_available():
+            r = _emular_adversario(session, {"ip": host})
+            entro = bool(r.get("entro"))
+        resumen.append({"equipo": host, "entro": entro})
+
+    fases = ["recon", "enum", "vuln"] + (["exploit"] if scope.phase_allowed("exploit") else [])
+    ruta = _guardar_json(session, fases)
+    session.say(f"  ===== OPERACION TERMINADA. Evidencia: {ruta} =====")
+    session.say("")
+    return {"objetivos": resumen, "conteo": _conteo(session.findings),
+            "total_equipos": len(session.targets), "evidencia_json": str(ruta)}
 
 
 def _avisar(session: AuditorSession, args: dict) -> dict:
@@ -672,8 +726,11 @@ def system_prompt(scope: Scope | None, full_power: bool = False) -> str:
         "'reconoce la red' -> reconocer; 'explota/entra/consigue shell en el .5' -> "
         "explotar; 'emula un adversario/lanza la campaña/ataque completo con "
         "evasion en el .5' -> emular_adversario (encadena tecnicas ATT&CK para "
-        "medir la deteccion del defensivo); 'que tecnicas tienes' -> "
-        "tecnicas_adversario; 'avisame/mandame al correo' -> avisar_por_correo. "
+        "medir la deteccion del defensivo); 'hazlo todo tu solo'/'ataca solo'/"
+        "'operacion autonoma'/'atacala entera sin que te guie' -> operacion_autonoma "
+        "(cadena COMPLETA sola: recon->enum->vuln->intrusion+adversario); "
+        "'que tecnicas tienes' -> tecnicas_adversario; 'avisame/mandame al correo' "
+        "-> avisar_por_correo. "
         "explotar y emular_adversario requieren fase 'exploit' autorizada. Corre "
         "auditoria_completa SOLO si pide 'todo/completo/auditalo entero'. NO te "
         "adelantes a fases que no te pidieron.\n"
