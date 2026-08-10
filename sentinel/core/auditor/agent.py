@@ -88,30 +88,32 @@ _IP = {"ip": {"type": "string", "description": "IP del equipo objetivo (debe est
 
 TOOL_SPECS = [
     _t("configurar_alcance",
-       "Fija el ALCANCE de la auditoria a partir de lo que dice el operador: a "
-       "que objetivo(s) atacar, quien lo autoriza y que fases. Llamalo cuando el "
-       "operador te diga que quiere auditar y a quien. Puedes volver a llamarlo "
-       "para cambiar de objetivo. Ninguna otra herramienta funciona sin esto.",
+       "Fija el OBJETIVO de la auditoria con lo que diga el operador (una IP, un "
+       "rango, o su red local). Llamalo en cuanto el operador diga que quiere "
+       "auditar; basta con 'targets'. Puedes volver a llamarlo para cambiar de "
+       "objetivo. Ninguna otra herramienta funciona sin esto. NO pidas quien "
+       "autoriza ni actas: el operador ya autoriza al pedirlo.",
        {"targets": {"type": "array", "items": {"type": "string"},
                     "description": "IPs o rangos CIDR a auditar, p.ej. "
-                                   "['192.168.1.10'] o ['192.168.1.0/24']."},
-        "authorized_by": {"type": "string",
-                          "description": "Quien autoriza (nombre/cargo, o el "
-                                         "propio operador si el declara autorizarlo)."},
+                                   "['192.168.1.10'] o ['192.168.1.0/24']. Si el "
+                                   "operador dice 'mi ip'/'mi red'/'esta maquina', "
+                                   "obtenlos antes con detectar_red_local."},
         "allowed_phases": {"type": "array", "items": {"type": "string"},
-                           "description": "Fases autorizadas: recon, enum, vuln "
-                                          "(y exploit solo si lo pide expreso)."},
-        "engagement": {"type": "string", "description": "Nombre corto del trabajo."},
+                           "description": "Fases: recon, enum, vuln. Omitir = las tres."},
+        "engagement": {"type": "string", "description": "Nombre corto del trabajo (opcional)."},
         "excludes": {"type": "array", "items": {"type": "string"},
-                     "description": "IPs a NO tocar aunque caigan en el rango."},
-        "authorization_ref": {"type": "string", "description": "Referencia del acta, si hay."},
+                     "description": "IPs a NO tocar aunque caigan en el rango (opcional)."},
         "horas_ventana": {"type": "integer",
                           "description": "Horas de ventana desde ahora. Omitir = sin limite horario."}},
-       ["targets", "authorized_by", "allowed_phases"]),
+       ["targets"]),
+    _t("detectar_red_local",
+       "Devuelve la(s) IP y subred(es) de la propia maquina Kali. Usalo cuando el "
+       "operador diga 'mi ip', 'mi red', 'esta maquina', 'la red local' o similar, "
+       "para saber que objetivo usar sin que el lo escriba. No toca otros equipos."),
     _t("estado_alcance",
-       "Muestra el alcance actual (quien autoriza, objetivos, ventana, fases) y "
-       "el estado: equipos y hallazgos ya recogidos. No toca la red. Si aun no "
-       "hay alcance, te dice que preguntar al operador."),
+       "Muestra el objetivo actual, la ventana, las fases y el estado: equipos y "
+       "hallazgos ya recogidos. No toca la red. Si aun no hay objetivo, te dice "
+       "que preguntar al operador."),
     _t("reconocer",
        "Fase 1: reconocimiento con nmap sobre TODO el alcance. Descubre equipos "
        "vivos y sus puertos/servicios abiertos. Es el punto de partida."),
@@ -160,6 +162,9 @@ def _dispatch(session: AuditorSession, name: str, args: dict) -> dict:
         inst = [t.name for t in toolkit.ARSENAL if t.installed()]
         falta = [t.name for t in toolkit.ARSENAL if not t.installed()]
         return {"instaladas": inst, "faltan": falta}
+
+    if name == "detectar_red_local":
+        return _detectar_red_local()
 
     if name == "configurar_alcance":
         return _configurar_alcance(session, args)
@@ -269,17 +274,56 @@ def _dispatch(session: AuditorSession, name: str, args: dict) -> dict:
     return {"error": f"herramienta desconocida: {name}"}
 
 
+def _detectar_red_local() -> dict:
+    """IP(s) y subred(es) de la propia maquina. Para 'escanea mi ip/mi red'."""
+    import subprocess
+    import socket
+    import ipaddress
+    ips: list[str] = []
+    redes: list[str] = []
+    try:
+        out = subprocess.run(["ip", "-o", "-4", "addr", "show"],
+                             capture_output=True, text=True, timeout=10).stdout
+        for line in out.splitlines():
+            partes = line.split()
+            if "inet" in partes:
+                cidr = partes[partes.index("inet") + 1]     # 192.168.56.101/24
+                ip = cidr.split("/")[0]
+                if ip.startswith("127."):
+                    continue
+                ips.append(ip)
+                redes.append(str(ipaddress.ip_network(cidr, strict=False)))
+    except Exception:
+        pass
+    if not ips:   # respaldo si no hay 'ip' (p.ej. Windows): IP de salida
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            ips.append(ip)
+            redes.append(str(ipaddress.ip_network(ip + "/24", strict=False)))
+        except OSError:
+            pass
+    return {"ips_locales": ips, "redes_locales": sorted(set(redes)),
+            "nota": "usa una IP para escanear solo esta maquina, o una subred /24 "
+                    "para toda la red local."}
+
+
 def _configurar_alcance(session: AuditorSession, args: dict) -> dict:
-    """Arma el alcance desde la conversacion, lo valida (falla cerrado) y lo
-    fija en la sesion. Guarda un registro JSON de lo autorizado."""
+    """Arma el alcance desde la conversacion, lo valida (falla cerrado) y lo fija
+    en la sesion. El operador ya autoriza al pedirlo: no se le pregunta, pero
+    queda un registro JSON (cadena de custodia)."""
+    operador = (session.scope.operator if session.scope else None) or "operador"
     data = {
         "engagement": (args.get("engagement") or "Auditoria (definida en sesion)"),
-        "authorized_by": (args.get("authorized_by") or "").strip(),
+        "authorized_by": (args.get("authorized_by") or "").strip()
+                         or f"{operador} (autorizado en sesion)",
         "authorization_ref": (args.get("authorization_ref") or "").strip(),
-        "operator": session.scope.operator if session.scope else "operador",
+        "operator": operador,
         "targets": args.get("targets") or [],
         "excludes": args.get("excludes") or [],
-        "allowed_phases": args.get("allowed_phases") or ["recon"],
+        "allowed_phases": args.get("allowed_phases") or ["recon", "enum", "vuln"],
     }
     horas = args.get("horas_ventana")
     if horas:
@@ -395,20 +439,27 @@ def system_prompt(scope: Scope | None) -> str:
         "taparia el equipo azul. Responde SIEMPRE en espanol, claro y conciso.\n"
         "Cuando el operador pida algo, no describas comandos: EJECUTALOS con las "
         "herramientas disponibles.\n\n")
+    smart = (
+        "SE RESOLUTIVO E INTELIGENTE: entiende lo que el operador quiere aunque "
+        "lo diga informal o con faltas. NO le pidas datos que puedas deducir tu "
+        "mismo, y NUNCA le preguntes 'quien autoriza' ni referencias de acta: el "
+        "operador ya autoriza al pedirlo.\n"
+        "- Si dice 'escanea mi ip', 'mi red', 'esta maquina' o similar: llama "
+        "primero a detectar_red_local, toma la IP/subred y fija el objetivo con "
+        "configurar_alcance. Si dice 'mi ip' usa la IP sola; si dice 'mi red' usa "
+        "la subred /24.\n"
+        "- Si da una IP o rango directo, fija el alcance y arranca lo que pida.\n"
+        "- Si no dice fases, asume recon+enum+vuln. Confirma en UNA linea y actua.\n\n")
     if scope is None:
-        return base + (
-            "AUN NO HAY ALCANCE definido. Tu PRIMERA tarea, antes de cualquier "
-            "escaneo, es preguntar al operador —en una sola pregunta clara— QUE "
-            "quiere auditar, a QUE objetivo(s) (IP o rango), QUIEN lo autoriza y "
-            "que FASES (recon/enum/vuln). En cuanto responda, llama a "
-            "configurar_alcance con esos datos y confirma antes de arrancar. "
-            "No inventes objetivos: los pone el operador.")
+        return base + smart + (
+            "AUN NO HAY OBJETIVO. En cuanto el operador diga que auditar (una IP, "
+            "un rango, o su red local), fijalo con configurar_alcance y ponte en "
+            "marcha. No inventes objetivos: los da el operador.")
     s = scope.summary()
-    return base + (
-        f"ALCANCE ACTUAL: engagement '{s['engagement']}', autoriza "
-        f"{s['autorizado_por']}, objetivos {s['objetivos']}, fases {s['fases']}, "
-        f"ventana {s['ventana']}. Si el operador quiere otro objetivo, usa "
-        "configurar_alcance para cambiarlo.")
+    return base + smart + (
+        f"OBJETIVO ACTUAL: '{s['engagement']}', objetivos {s['objetivos']}, "
+        f"fases {s['fases']}, ventana {s['ventana']}. Si el operador quiere otro "
+        "objetivo, usa configurar_alcance para cambiarlo.")
 
 
 def _extract_tool_calls(msg: dict) -> list[dict]:
@@ -443,9 +494,9 @@ def run_chat(scope: Scope | None, api_key: str, model: str = llm.DEFAULT_MODEL,
     print_fn("  SENTINEL Rojo — asistente de auditoria. Hablame en español.")
     print_fn(f"  Cerebro: {model}")
     if scope is None:
-        print_fn("  Sin alcance previo: dime QUÉ quieres auditar, a QUÉ objetivo "
-                 "y QUIÉN lo autoriza.")
-        print_fn("  Ej: 'audita la 192.168.56.10, autorizo yo, solo recon y enum'")
+        print_fn("  Dime QUÉ quieres auditar: una IP, un rango, o 'mi red'/'mi ip'.")
+        print_fn("  Ej: 'escanea mi red' · 'audita la 192.168.56.10' · "
+                 "'reconoce el 10.0.0.0/24'")
     else:
         print_fn(f"  Engagement: {scope.engagement}")
         print_fn("  Ej: 'reconoce todo el alcance' · 'enumera el .5' · 'audita todo'")
