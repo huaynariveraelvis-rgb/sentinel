@@ -157,6 +157,13 @@ def load_scope(path: str | Path) -> Scope:
         data = json.loads(p.read_text(encoding="utf-8"))
     except (ValueError, OSError) as e:
         raise ScopeError(f"No se pudo leer el alcance: {e}.")
+    return build_scope(data)
+
+
+def build_scope(data: dict) -> Scope:
+    """Valida y construye un Scope desde un dict (venga de un archivo o de una
+    sesion conversacional). Falla CERRADO: ante cualquier duda no devuelve un
+    alcance a medias que pudiera permitir tocar algo no autorizado."""
     if not isinstance(data, dict):
         raise ScopeError("El alcance debe ser un objeto JSON.")
 

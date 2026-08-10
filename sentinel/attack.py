@@ -267,15 +267,17 @@ def _resolver_llm() -> tuple[str, str]:
     return key, modelo
 
 
-def cmd_chat(scope_path: str, out_dir: str, modelo_cli: str | None) -> int:
+def cmd_chat(scope_path: str | None, out_dir: str, modelo_cli: str | None) -> int:
     from sentinel.core.auditor import agent
-    try:
-        scope = load_scope(scope_path)
-    except ScopeError as e:
-        _head("SENTINEL Rojo")
-        print(f"  ALCANCE INVALIDO: {e}")
-        print()
-        return 2
+    scope = None
+    if scope_path:
+        try:
+            scope = load_scope(scope_path)
+        except ScopeError as e:
+            _head("SENTINEL Rojo")
+            print(f"  ALCANCE INVALIDO: {e}")
+            print()
+            return 2
     key, modelo = _resolver_llm()
     if modelo_cli:
         modelo = modelo_cli
@@ -286,8 +288,12 @@ def cmd_chat(scope_path: str, out_dir: str, modelo_cli: str | None) -> int:
         print("  O ponla en config/settings.json -> ai.openrouter_api_key")
         print()
         return 4
-    _head(f"SENTINEL Rojo — {scope.engagement}")
-    _print_scope(scope)
+    _head("SENTINEL Rojo" + (f" — {scope.engagement}" if scope else ""))
+    if scope is not None:
+        _print_scope(scope)
+    else:
+        print("  Sin alcance previo: SENTINEL Rojo te preguntara qué auditar y a quién.")
+        print(f"  {_LINE}")
     return agent.run_chat(scope, key, modelo, out_dir=out_dir)
 
 
@@ -407,7 +413,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="Lista el catalogo de herramientas y si estan instaladas.")
     ap.add_argument("--chat", action="store_true",
                     help="Modo conversacional (SENTINEL Rojo): le hablas y el "
-                         "audita. Necesita --scope y OPENROUTER_API_KEY.")
+                         "audita. Necesita OPENROUTER_API_KEY. --scope es "
+                         "opcional: sin el, te pregunta que auditar y a quien.")
     ap.add_argument("--modelo", metavar="MODELO",
                     help="Modelo del cerebro en OpenRouter (ej. "
                          "google/gemini-2.5-flash, anthropic/claude-3.5-sonnet).")
@@ -424,8 +431,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.arsenal:
         return cmd_arsenal()
     if args.chat:
-        if not args.scope:
-            ap.error("--chat necesita --scope alcance.json")
         return cmd_chat(args.scope, out_dir=args.salida, modelo_cli=args.modelo)
     if args.verificar:
         return cmd_verificar(args.scope)

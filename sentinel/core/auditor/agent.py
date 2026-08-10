@@ -21,11 +21,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from sentinel.core.monitor import Finding, Severity
-from sentinel.core.auditor.scope import Scope, ScopeError
+from sentinel.core.auditor.scope import Scope, ScopeError, build_scope
 from sentinel.core.auditor import recon, enum, vuln, exploit, toolkit
 from sentinel.core.auditor.targets import derive_targets, is_web, is_tls, is_smb
 from sentinel.core import llm
@@ -35,7 +35,7 @@ from sentinel.core import llm
 
 @dataclass
 class AuditorSession:
-    scope: Scope
+    scope: Scope | None = None      # puede fijarse en la conversacion
     out_dir: str = "evidencia_ofensiva"
     findings: list[Finding] = field(default_factory=list)
     targets: dict[str, list[dict]] = field(default_factory=dict)
@@ -87,10 +87,31 @@ def _t(name: str, desc: str, props: dict | None = None,
 _IP = {"ip": {"type": "string", "description": "IP del equipo objetivo (debe estar en el alcance)."}}
 
 TOOL_SPECS = [
+    _t("configurar_alcance",
+       "Fija el ALCANCE de la auditoria a partir de lo que dice el operador: a "
+       "que objetivo(s) atacar, quien lo autoriza y que fases. Llamalo cuando el "
+       "operador te diga que quiere auditar y a quien. Puedes volver a llamarlo "
+       "para cambiar de objetivo. Ninguna otra herramienta funciona sin esto.",
+       {"targets": {"type": "array", "items": {"type": "string"},
+                    "description": "IPs o rangos CIDR a auditar, p.ej. "
+                                   "['192.168.1.10'] o ['192.168.1.0/24']."},
+        "authorized_by": {"type": "string",
+                          "description": "Quien autoriza (nombre/cargo, o el "
+                                         "propio operador si el declara autorizarlo)."},
+        "allowed_phases": {"type": "array", "items": {"type": "string"},
+                           "description": "Fases autorizadas: recon, enum, vuln "
+                                          "(y exploit solo si lo pide expreso)."},
+        "engagement": {"type": "string", "description": "Nombre corto del trabajo."},
+        "excludes": {"type": "array", "items": {"type": "string"},
+                     "description": "IPs a NO tocar aunque caigan en el rango."},
+        "authorization_ref": {"type": "string", "description": "Referencia del acta, si hay."},
+        "horas_ventana": {"type": "integer",
+                          "description": "Horas de ventana desde ahora. Omitir = sin limite horario."}},
+       ["targets", "authorized_by", "allowed_phases"]),
     _t("estado_alcance",
-       "Muestra el alcance autorizado (quien autoriza, objetivos, ventana, "
-       "fases) y el estado actual: equipos y hallazgos ya recogidos. No toca "
-       "la red. Usalo para saber que se puede hacer antes de escanear."),
+       "Muestra el alcance actual (quien autoriza, objetivos, ventana, fases) y "
+       "el estado: equipos y hallazgos ya recogidos. No toca la red. Si aun no "
+       "hay alcance, te dice que preguntar al operador."),
     _t("reconocer",
        "Fase 1: reconocimiento con nmap sobre TODO el alcance. Descubre equipos "
        "vivos y sus puertos/servicios abiertos. Es el punto de partida."),
@@ -134,19 +155,32 @@ def execute_tool(session: AuditorSession, name: str, args: dict) -> dict:
 
 
 def _dispatch(session: AuditorSession, name: str, args: dict) -> dict:
-    scope = session.scope
-
-    if name == "estado_alcance":
-        return {"alcance": scope.summary(),
-                "ventana_abierta": scope.window_open(),
-                "nmap_instalado": recon.nmap_available(),
-                "equipos_conocidos": sorted(session.targets),
-                "hallazgos_recogidos": len(session.findings)}
-
+    # Herramientas que NO necesitan un alcance ya fijado.
     if name == "arsenal":
         inst = [t.name for t in toolkit.ARSENAL if t.installed()]
         falta = [t.name for t in toolkit.ARSENAL if not t.installed()]
         return {"instaladas": inst, "faltan": falta}
+
+    if name == "configurar_alcance":
+        return _configurar_alcance(session, args)
+
+    if name == "estado_alcance":
+        if session.scope is None:
+            return {"sin_alcance": True,
+                    "instruccion": "Todavia no hay alcance. Pregunta al operador "
+                    "QUE quiere auditar, a QUE objetivo(s) (IP o rango), QUIEN lo "
+                    "autoriza y que FASES; luego llama configurar_alcance."}
+        return {"alcance": session.scope.summary(),
+                "ventana_abierta": session.scope.window_open(),
+                "nmap_instalado": recon.nmap_available(),
+                "equipos_conocidos": sorted(session.targets),
+                "hallazgos_recogidos": len(session.findings)}
+
+    # De aqui en adelante hace falta un alcance fijado.
+    if session.scope is None:
+        return {"error": "primero define el alcance con configurar_alcance "
+                         "(dime objetivo, quien autoriza y fases)."}
+    scope = session.scope
 
     if name == "reconocer":
         if not recon.nmap_available():
@@ -235,6 +269,54 @@ def _dispatch(session: AuditorSession, name: str, args: dict) -> dict:
     return {"error": f"herramienta desconocida: {name}"}
 
 
+def _configurar_alcance(session: AuditorSession, args: dict) -> dict:
+    """Arma el alcance desde la conversacion, lo valida (falla cerrado) y lo
+    fija en la sesion. Guarda un registro JSON de lo autorizado."""
+    data = {
+        "engagement": (args.get("engagement") or "Auditoria (definida en sesion)"),
+        "authorized_by": (args.get("authorized_by") or "").strip(),
+        "authorization_ref": (args.get("authorization_ref") or "").strip(),
+        "operator": session.scope.operator if session.scope else "operador",
+        "targets": args.get("targets") or [],
+        "excludes": args.get("excludes") or [],
+        "allowed_phases": args.get("allowed_phases") or ["recon"],
+    }
+    horas = args.get("horas_ventana")
+    if horas:
+        try:
+            ini = datetime.now()
+            data["window"] = {
+                "start": ini.isoformat(timespec="seconds"),
+                "end": (ini + timedelta(hours=int(horas))).isoformat(timespec="seconds")}
+        except (ValueError, TypeError):
+            pass
+    try:
+        nuevo = build_scope(data)
+    except ScopeError as e:
+        return {"error": f"no pude fijar el alcance: {e}. Pide al operador el dato que falta."}
+
+    # Cambiar de alcance reinicia los objetivos/hallazgos previos (son de otro trabajo).
+    session.scope = nuevo
+    session.targets = {}
+    session.findings = []
+
+    # Registro de lo que se autorizo en esta sesion (cadena de custodia).
+    try:
+        destino = Path(session.out_dir)
+        destino.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        (destino / f"alcance_{stamp}.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+    return {"alcance_fijado": nuevo.summary(),
+            "ventana_abierta": nuevo.window_open(),
+            "nmap_instalado": recon.nmap_available(),
+            "listo_para": [f for f in ("recon", "enum", "vuln")
+                           if nuevo.phase_allowed(f)]}
+
+
 def _auditoria_completa(session: AuditorSession) -> dict:
     scope = session.scope
     if not recon.nmap_available():
@@ -294,9 +376,8 @@ def _guardar_json(session: AuditorSession, fases: list[str]) -> Path:
 
 # ── Cerebro conversacional ────────────────────────────────────────────────────
 
-def system_prompt(scope: Scope) -> str:
-    s = scope.summary()
-    return (
+def system_prompt(scope: Scope | None) -> str:
+    base = (
         "Eres SENTINEL Rojo, un asistente de PENTEST AUTORIZADO que audita el "
         "laboratorio de una tesis universitaria de ciberseguridad. Tu papel es "
         "el equipo rojo (ofensivo) que encuentra los huecos para que el equipo "
@@ -311,13 +392,23 @@ def system_prompt(scope: Scope) -> str:
         "inventes hallazgos, CVEs ni resultados.\n\n"
         "METODOLOGIA: sigue recon -> enumeracion -> vulnerabilidades. Prioriza "
         "por severidad y, cuando expliques un hallazgo, di brevemente como lo "
-        "taparia el equipo azul. Responde SIEMPRE en espanol, claro y conciso.\n\n"
+        "taparia el equipo azul. Responde SIEMPRE en espanol, claro y conciso.\n"
+        "Cuando el operador pida algo, no describas comandos: EJECUTALOS con las "
+        "herramientas disponibles.\n\n")
+    if scope is None:
+        return base + (
+            "AUN NO HAY ALCANCE definido. Tu PRIMERA tarea, antes de cualquier "
+            "escaneo, es preguntar al operador —en una sola pregunta clara— QUE "
+            "quiere auditar, a QUE objetivo(s) (IP o rango), QUIEN lo autoriza y "
+            "que FASES (recon/enum/vuln). En cuanto responda, llama a "
+            "configurar_alcance con esos datos y confirma antes de arrancar. "
+            "No inventes objetivos: los pone el operador.")
+    s = scope.summary()
+    return base + (
         f"ALCANCE ACTUAL: engagement '{s['engagement']}', autoriza "
         f"{s['autorizado_por']}, objetivos {s['objetivos']}, fases {s['fases']}, "
-        f"ventana {s['ventana']}.\n"
-        "Cuando el operador pida algo, usa las herramientas; no describas "
-        "comandos, EJECUTALOS con las herramientas disponibles."
-    )
+        f"ventana {s['ventana']}. Si el operador quiere otro objetivo, usa "
+        "configurar_alcance para cambiarlo.")
 
 
 def _extract_tool_calls(msg: dict) -> list[dict]:
@@ -339,19 +430,25 @@ def _extract_tool_calls(msg: dict) -> list[dict]:
     return out
 
 
-def run_chat(scope: Scope, api_key: str, model: str = llm.DEFAULT_MODEL,
+def run_chat(scope: Scope | None, api_key: str, model: str = llm.DEFAULT_MODEL,
              out_dir: str = "evidencia_ofensiva",
              input_fn=input, print_fn=print) -> int:
-    """Bucle de conversacion en la terminal. `input_fn`/`print_fn` se inyectan
-    para poder probarlo sin teclado."""
+    """Bucle de conversacion en la terminal. `scope` puede ser None: en ese caso
+    SENTINEL Rojo pregunta al operador que auditar y a quien, y arma el alcance
+    con configurar_alcance. `input_fn`/`print_fn` se inyectan para pruebas."""
     session = AuditorSession(scope=scope, out_dir=out_dir)
     messages = [{"role": "system", "content": system_prompt(scope)}]
 
     print_fn("")
     print_fn("  SENTINEL Rojo — asistente de auditoria. Hablame en español.")
-    print_fn(f"  Cerebro: {model}   ·   Engagement: {scope.engagement}")
-    print_fn("  Ejemplos: 'reconoce todo el alcance' · 'enumera el .5' · "
-             "'audita todo' · 'que encontraste'")
+    print_fn(f"  Cerebro: {model}")
+    if scope is None:
+        print_fn("  Sin alcance previo: dime QUÉ quieres auditar, a QUÉ objetivo "
+                 "y QUIÉN lo autoriza.")
+        print_fn("  Ej: 'audita la 192.168.56.10, autorizo yo, solo recon y enum'")
+    else:
+        print_fn(f"  Engagement: {scope.engagement}")
+        print_fn("  Ej: 'reconoce todo el alcance' · 'enumera el .5' · 'audita todo'")
     print_fn("  Escribe 'salir' para terminar.")
     print_fn("")
 
