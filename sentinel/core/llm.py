@@ -23,7 +23,18 @@ import urllib.request
 import urllib.error
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "google/gemini-2.5-flash"
+
+# Modelo GRATIS por defecto: bueno razonando y con soporte de herramientas.
+DEFAULT_MODEL = "deepseek/deepseek-chat-v3-0324:free"
+
+# Cadena de respaldo, todos GRATIS y con function calling. Si el principal esta
+# saturado (429) o caido, se prueba el siguiente sin cortar la conversacion.
+FREE_FALLBACKS = [
+    "deepseek/deepseek-chat-v3-0324:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemini-2.0-flash-exp:free",
+    "qwen/qwen-2.5-72b-instruct:free",
+]
 
 
 def complete(messages: list[dict], tools: list[dict] | None, api_key: str,
@@ -77,3 +88,25 @@ def complete(messages: list[dict], tools: list[dict] | None, api_key: str,
     if not choices:
         return {"error": "el LLM no devolvio ninguna respuesta."}
     return {"message": choices[0].get("message") or {}, "raw": payload}
+
+
+def complete_resilient(messages: list[dict], tools: list[dict] | None,
+                       api_key: str, model: str = DEFAULT_MODEL,
+                       fallbacks: list[str] | None = None, **kw) -> dict:
+    """Como complete(), pero si el modelo falla por saturacion/caida prueba los
+    de respaldo (todos gratis). Devuelve el primer exito, o el ultimo error.
+
+    No reintenta ante un 401 (clave mala): el problema no lo arregla otro modelo.
+    Devuelve tambien `modelo_usado` para que la UI sepa cual respondio.
+    """
+    cadena = [model] + [m for m in (fallbacks or FREE_FALLBACKS) if m != model]
+    ultimo: dict = {"error": "sin modelos que probar."}
+    for m in cadena:
+        r = complete(messages, tools, api_key, m, **kw)
+        if "error" not in r:
+            r["modelo_usado"] = m
+            return r
+        ultimo = r
+        if "401" in (r.get("error") or ""):
+            break   # clave invalida: no tiene sentido seguir probando
+    return ultimo

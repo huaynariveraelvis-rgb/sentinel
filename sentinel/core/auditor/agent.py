@@ -525,7 +525,7 @@ def run_chat(scope: Scope | None, api_key: str, model: str = llm.DEFAULT_MODEL,
 
         # El modelo puede encadenar varias herramientas antes de responder.
         for _ in range(10):
-            resp = llm.complete(messages, TOOL_SPECS, api_key, model)
+            resp = llm.complete_resilient(messages, TOOL_SPECS, api_key, model)
             if "error" in resp:
                 print_fn(f"  [cerebro] {resp['error']}")
                 messages.pop()   # descarta el turno del usuario que no se pudo atender

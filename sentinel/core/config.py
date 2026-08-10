@@ -173,7 +173,8 @@ _DEFAULTS = {
              "watch_network": True, "watch_autoruns": True},
     "ai": {"gemini_api_key": "", "enabled": False,
            # SENTINEL Rojo (Auditor conversacional): cerebro via OpenRouter.
-           "openrouter_api_key": "", "openrouter_model": "google/gemini-2.5-flash"},
+           "openrouter_api_key": "",
+           "openrouter_model": "deepseek/deepseek-chat-v3-0324:free"},
     "analysis": {"virustotal_api_key": ""},
     "voice": {"enabled": False, "alert_on_severity": "ALTA"},
 }
