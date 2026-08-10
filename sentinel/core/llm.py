@@ -24,18 +24,17 @@ import urllib.error
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Modelo por defecto: DeepSeek V3, fuerte razonando y con function calling.
-# NO es el ':free' (que esta bloqueado en cuentas free tier sin activar la
-# politica de datos): es la version de PAGO, baratisima (centimos por auditoria).
-DEFAULT_MODEL = "deepseek/deepseek-chat-v3-0324"
+# Modelo por defecto: GRATIS. 'openrouter/free' es el router automatico de
+# OpenRouter que elige un modelo gratis disponible; verificado que responde y
+# hace function calling. Costo: $0.
+DEFAULT_MODEL = "openrouter/free"
 
-# Cadena de respaldo: modelos baratos que SI responden con poco saldo y con
-# function calling. Si el principal se satura (429) o cae, salta al siguiente
-# sin cortar la conversacion.
+# Cadena de respaldo: gratis primero; si el gratis se satura (429) o cae, cae a
+# DeepSeek V3 de pago (centimos por auditoria) para NO quedar cortado. Si
+# quieres $0 estricto, deja solo 'openrouter/free' aqui.
 FALLBACKS = [
+    "openrouter/free",
     "deepseek/deepseek-chat-v3-0324",
-    "google/gemini-2.5-flash",
-    "openai/gpt-4o-mini",
 ]
 
 
