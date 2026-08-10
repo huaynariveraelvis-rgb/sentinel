@@ -24,16 +24,18 @@ import urllib.error
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Modelo GRATIS por defecto: bueno razonando y con soporte de herramientas.
-DEFAULT_MODEL = "deepseek/deepseek-chat-v3-0324:free"
+# Modelo por defecto: DeepSeek V3, fuerte razonando y con function calling.
+# NO es el ':free' (que esta bloqueado en cuentas free tier sin activar la
+# politica de datos): es la version de PAGO, baratisima (centimos por auditoria).
+DEFAULT_MODEL = "deepseek/deepseek-chat-v3-0324"
 
-# Cadena de respaldo, todos GRATIS y con function calling. Si el principal esta
-# saturado (429) o caido, se prueba el siguiente sin cortar la conversacion.
-FREE_FALLBACKS = [
-    "deepseek/deepseek-chat-v3-0324:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemini-2.0-flash-exp:free",
-    "qwen/qwen-2.5-72b-instruct:free",
+# Cadena de respaldo: modelos baratos que SI responden con poco saldo y con
+# function calling. Si el principal se satura (429) o cae, salta al siguiente
+# sin cortar la conversacion.
+FALLBACKS = [
+    "deepseek/deepseek-chat-v3-0324",
+    "google/gemini-2.5-flash",
+    "openai/gpt-4o-mini",
 ]
 
 
@@ -99,7 +101,7 @@ def complete_resilient(messages: list[dict], tools: list[dict] | None,
     No reintenta ante un 401 (clave mala): el problema no lo arregla otro modelo.
     Devuelve tambien `modelo_usado` para que la UI sepa cual respondio.
     """
-    cadena = [model] + [m for m in (fallbacks or FREE_FALLBACKS) if m != model]
+    cadena = [model] + [m for m in (fallbacks or FALLBACKS) if m != model]
     ultimo: dict = {"error": "sin modelos que probar."}
     for m in cadena:
         r = complete(messages, tools, api_key, m, **kw)
