@@ -18,9 +18,18 @@ No lanza excepciones de red: devuelve el error para que el agente lo explique.
 """
 from __future__ import annotations
 
+import re
 import json
 import urllib.request
 import urllib.error
+
+# Bloques de "pensamiento" que algunos modelos de reasoning cuelan en el texto.
+_THINK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _limpiar(texto: str) -> str:
+    """Quita bloques <think>...</think> del contenido visible."""
+    return _THINK.sub("", texto).strip()
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -52,7 +61,10 @@ def complete(messages: list[dict], tools: list[dict] | None, api_key: str,
         return {"error": "falta la clave del LLM (OPENROUTER_API_KEY)."}
 
     body: dict = {"model": model, "messages": messages,
-                  "temperature": temperature, "max_tokens": max_tokens}
+                  "temperature": temperature, "max_tokens": max_tokens,
+                  # El modelo puede razonar, pero que NO devuelva el razonamiento
+                  # como texto (evita volcados de "chain of thought" en la respuesta).
+                  "reasoning": {"exclude": True}}
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"
@@ -88,7 +100,10 @@ def complete(messages: list[dict], tools: list[dict] | None, api_key: str,
     choices = payload.get("choices") or []
     if not choices:
         return {"error": "el LLM no devolvio ninguna respuesta."}
-    return {"message": choices[0].get("message") or {}, "raw": payload}
+    msg = choices[0].get("message") or {}
+    if isinstance(msg.get("content"), str):
+        msg["content"] = _limpiar(msg["content"])
+    return {"message": msg, "raw": payload}
 
 
 def complete_resilient(messages: list[dict], tools: list[dict] | None,
