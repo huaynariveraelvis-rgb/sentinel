@@ -39,6 +39,15 @@ class AuditorSession:
     out_dir: str = "evidencia_ofensiva"
     findings: list[Finding] = field(default_factory=list)
     targets: dict[str, list[dict]] = field(default_factory=dict)
+    progress: object = None          # callable(str): 'avance tras avance' en vivo
+
+    def say(self, msg: str) -> None:
+        """Emite una linea de avance a la terminal, si hay a donde."""
+        if self.progress:
+            try:
+                self.progress(msg)
+            except Exception:
+                pass
 
     def add_findings(self, nuevos: list[Finding]) -> None:
         self.findings.extend(nuevos)
@@ -190,8 +199,7 @@ def _dispatch(session: AuditorSession, name: str, args: dict) -> dict:
     if name == "reconocer":
         if not recon.nmap_available():
             return {"error": "nmap no esta instalado (sudo apt install nmap)."}
-        fs = recon.scan_scope(scope)
-        session.add_findings(fs)
+        fs = _recon_con_avance(session)
         return {"equipos": sorted(session.targets),
                 "total_equipos": len(session.targets),
                 "puertos_por_equipo": {ip: [f"{e['port']}/{e['svc']}" for e in ports]
@@ -212,16 +220,7 @@ def _dispatch(session: AuditorSession, name: str, args: dict) -> dict:
         err = _ensure_host(session, ip)
         if err:
             return {"error": err}
-        nuevos: list[Finding] = []
-        ports = session.targets.get(ip, [])
-        for e in ports:
-            if is_web(e):
-                nuevos += enum.enum_web(scope, ip, e["port"])
-                if is_tls(e):
-                    nuevos += enum.enum_tls(scope, ip, e["port"])
-        if any(is_smb(e) for e in ports):
-            nuevos += enum.enum_smb(scope, ip)
-        session.add_findings(nuevos)
+        nuevos = _enumerar_con_avance(session, ip)
         return {"equipo": ip, "hallazgos": [_brief(f) for f in nuevos] or
                 "sin servicios enumerables (o herramientas no instaladas)"}
 
@@ -230,13 +229,7 @@ def _dispatch(session: AuditorSession, name: str, args: dict) -> dict:
         err = _ensure_host(session, ip)
         if err:
             return {"error": err}
-        nuevos = list(vuln.scan_vulns_nmap(scope, ip))
-        for e in session.targets.get(ip, []):
-            if is_web(e):
-                nuevos += vuln.scan_vulns_nuclei(scope, ip, e["port"])
-            if e.get("banner"):
-                nuevos += vuln.search_exploits(e["svc"], e["banner"])
-        session.add_findings(nuevos)
+        nuevos = _vulns_con_avance(session, ip)
         return {"equipo": ip, "hallazgos": [_brief(f) for f in nuevos] or
                 "sin vulnerabilidades detectadas (o herramientas no instaladas)"}
 
@@ -361,6 +354,72 @@ def _configurar_alcance(session: AuditorSession, args: dict) -> dict:
                            if nuevo.phase_allowed(f)]}
 
 
+# ── Fases con avance en vivo (el operador ve el progreso) ─────────────────────
+
+def _recon_con_avance(session: AuditorSession) -> list[Finding]:
+    scope = session.scope
+    session.say(f"  [recon] descubriendo equipos vivos en {', '.join(scope.targets)}...")
+    vivos = recon.discover_hosts(scope)
+    session.say(f"          -> {len(vivos)} vivo(s)"
+                + (f": {', '.join(vivos[:15])}" if vivos else ""))
+    findings: list[Finding] = [Finding(
+        category="recon", severity=Severity.INFO,
+        title=f"{len(vivos)} equipo(s) vivo(s) en el alcance",
+        detail="Inventario base del engagement.",
+        evidence={"vivos": vivos[:50], "total": len(vivos)}, attack="T1018")]
+    for i, ip in enumerate(vivos, 1):
+        session.say(f"  [recon] [{i}/{len(vivos)}] escaneando puertos de {ip}...")
+        try:
+            fs = recon.scan_host(scope, ip)
+        except ScopeError:
+            continue
+        findings += fs
+        npuertos = sum(len(v) for v in derive_targets(fs).values())
+        riesgo = [f for f in fs if f.category == "exposicion"]
+        linea = f"          {ip}: {npuertos} puerto(s) abierto(s)"
+        if riesgo:
+            linea += f"  (!) {len(riesgo)} de riesgo"
+        session.say(linea)
+    session.add_findings(findings)
+    return findings
+
+
+def _enumerar_con_avance(session: AuditorSession, ip: str) -> list[Finding]:
+    scope = session.scope
+    session.say(f"  [enum] {ip}: enumerando servicios...")
+    nuevos: list[Finding] = []
+    ports = session.targets.get(ip, [])
+    for e in ports:
+        if is_web(e):
+            session.say(f"         web {ip}:{e['port']} (whatweb/nikto)...")
+            nuevos += enum.enum_web(scope, ip, e["port"])
+            if is_tls(e):
+                session.say(f"         tls {ip}:{e['port']} (sslscan)...")
+                nuevos += enum.enum_tls(scope, ip, e["port"])
+    if any(is_smb(e) for e in ports):
+        session.say(f"         smb {ip} (enum4linux/smbmap)...")
+        nuevos += enum.enum_smb(scope, ip)
+    session.add_findings(nuevos)
+    return nuevos
+
+
+def _vulns_con_avance(session: AuditorSession, ip: str) -> list[Finding]:
+    scope = session.scope
+    session.say(f"  [vuln] {ip}: nmap NSE vuln...")
+    nuevos: list[Finding] = list(vuln.scan_vulns_nmap(scope, ip))
+    for e in session.targets.get(ip, []):
+        if is_web(e):
+            session.say(f"         nuclei {ip}:{e['port']}...")
+            nuevos += vuln.scan_vulns_nuclei(scope, ip, e["port"])
+        if e.get("banner"):
+            nuevos += vuln.search_exploits(e["svc"], e["banner"])
+    crit = [f for f in nuevos if f.severity >= Severity.HIGH]
+    if crit:
+        session.say(f"         (!) {len(crit)} hallazgo(s) ALTA+ en {ip}")
+    session.add_findings(nuevos)
+    return nuevos
+
+
 def _auditoria_completa(session: AuditorSession) -> dict:
     scope = session.scope
     if not recon.nmap_available():
@@ -368,34 +427,30 @@ def _auditoria_completa(session: AuditorSession) -> dict:
     if not scope.phase_allowed("recon"):
         return {"error": "el alcance no autoriza 'recon'."}
 
-    fs = recon.scan_scope(scope)
-    session.add_findings(fs)
+    session.say("")
+    session.say(f"  == AUDITORIA de {', '.join(scope.targets)} ==")
+    session.say("  -- Fase 1: reconocimiento --")
+    _recon_con_avance(session)
     fases = ["recon"]
-    if scope.phase_allowed("enum"):
+    if scope.phase_allowed("enum") and session.targets:
         fases.append("enum")
+        session.say("  -- Fase 2: enumeracion --")
         for ip in sorted(session.targets):
-            ports = session.targets[ip]
-            nuevos: list[Finding] = []
-            for e in ports:
-                if is_web(e):
-                    nuevos += enum.enum_web(scope, ip, e["port"])
-                    if is_tls(e):
-                        nuevos += enum.enum_tls(scope, ip, e["port"])
-            if any(is_smb(e) for e in ports):
-                nuevos += enum.enum_smb(scope, ip)
-            session.add_findings(nuevos)
-    if scope.phase_allowed("vuln"):
+            _enumerar_con_avance(session, ip)
+    if scope.phase_allowed("vuln") and session.targets:
         fases.append("vuln")
+        session.say("  -- Fase 3: vulnerabilidades --")
         for ip in sorted(session.targets):
-            nuevos = list(vuln.scan_vulns_nmap(scope, ip))
-            for e in session.targets[ip]:
-                if is_web(e):
-                    nuevos += vuln.scan_vulns_nuclei(scope, ip, e["port"])
-            session.add_findings(nuevos)
+            _vulns_con_avance(session, ip)
 
     ruta = _guardar_json(session, fases)
+    session.say(f"  == Auditoria terminada. Evidencia: {ruta} ==")
+    session.say("")
     return {"fases": fases, "conteo": _conteo(session.findings),
             "total_equipos": len(session.targets),
+            "por_equipo": {ip: [_brief(f) for f in session.findings
+                                if (f.evidence or {}).get("equipo") == ip][:10]
+                           for ip in sorted(session.targets)},
             "evidencia_json": str(ruta)}
 
 
@@ -438,8 +493,14 @@ def system_prompt(scope: Scope | None) -> str:
         "con el riesgo y CVEs probables (p.ej. SMB en Windows antiguo -> candidato "
         "a EternalBlue MS17-010; verificalo con buscar_vulnerabilidades). Descarta "
         "ruido, prioriza por severidad e impacto real.\n"
-        "4. REPORTA como experto: que encontraste, que es lo MAS grave y por que, y "
-        "en una linea como lo taparia el equipo azul. Tecnico, claro y conciso.\n\n"
+        "4. REPORTA con formato PROFESIONAL de pentester:\n"
+        "   - RESUMEN EJECUTIVO (1-2 lineas): postura general y lo mas critico.\n"
+        "   - HALLAZGOS ordenados por severidad (CRITICA/ALTA primero), cada uno: "
+        "**severidad** equipo:puerto/servicio - que es y por que importa - tecnica "
+        "MITRE ATT&CK - remediacion del equipo azul.\n"
+        "   - PROXIMOS PASOS recomendados.\n"
+        "   Usa vinetas y **negritas**. Tecnico, claro y en espanol. No inventes "
+        "severidades: usa las que traen los hallazgos.\n\n"
         "REGLAS INVIOLABLES:\n"
         "- Operas SOLO dentro del alcance. El guardian bloquea lo demas; si algo "
         "cae fuera, lo dices y sigues.\n"
@@ -506,6 +567,7 @@ def run_chat(scope: Scope | None, api_key: str, model: str = llm.DEFAULT_MODEL,
     SENTINEL Rojo pregunta al operador que auditar y a quien, y arma el alcance
     con configurar_alcance. `input_fn`/`print_fn` se inyectan para pruebas."""
     session = AuditorSession(scope=scope, out_dir=out_dir)
+    session.progress = print_fn        # 'avance tras avance' en vivo
     messages = [{"role": "system", "content": system_prompt(scope)}]
 
     print_fn("")
