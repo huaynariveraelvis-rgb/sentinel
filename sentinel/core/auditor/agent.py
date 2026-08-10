@@ -208,8 +208,12 @@ def _dispatch(session: AuditorSession, name: str, args: dict) -> dict:
 
     if name == "escanear_equipo":
         ip = str(args.get("ip", "")).strip()
+        session.say(f"  [scan] escaneando puertos y versiones de {ip}...")
         fs = recon.scan_host(scope, ip)
         session.add_findings(fs)
+        riesgo = [f for f in fs if f.category == "exposicion"]
+        session.say(f"          {ip}: {len(session.targets.get(ip, []))} puerto(s) abierto(s)"
+                    + (f"  (!) {len(riesgo)} de riesgo" if riesgo else ""))
         return {"equipo": ip,
                 "puertos": [f"{e['port']}/{e['svc']}"
                             for e in session.targets.get(ip, [])],
@@ -481,19 +485,26 @@ def system_prompt(scope: Scope | None) -> str:
         "audita el laboratorio de una tesis de ciberseguridad. Actuas como un "
         "profesional de equipo rojo con criterio propio: planificas, ejecutas y "
         "razonas sobre lo que encuentras, para que el equipo azul tape los huecos.\n\n"
-        "COMO TRABAJAS (como experto, no esperando micro-ordenes):\n"
+        "COMO TRABAJAS (el operador MANDA; tu ejecutas y muestras cada paso):\n"
         "1. ENTIENDE la intencion real del operador aunque hable informal o con "
         "faltas de ortografia. Deduce lo que puedas; no preguntes lo obvio.\n"
-        "2. PLANIFICA y ACTUA: decide que herramientas hacen falta y encadenalas "
-        "TU MISMO en el mismo turno, sin pedir permiso en cada paso (ya estas "
-        "autorizado dentro del alcance). Si el operador dice 'audita mi red' o "
-        "'hazlo todo', usa auditoria_completa (hace recon+enum+vuln de una) en vez "
-        "de muchas llamadas sueltas: es mas rapido y gasta menos.\n"
-        "3. RAZONA como pentester sobre los resultados: relaciona servicio/version "
+        "2. OBEDECE PASO A PASO: haz EXACTAMENTE lo que te pide, ni mas ni menos, "
+        "un paso por vez. 'escanea/reconoce el .5' -> escanear_equipo; 'enumera "
+        "el .5' -> enumerar; 'busca vulns en el .10' -> buscar_vulnerabilidades; "
+        "'reconoce la red' -> reconocer. Corre auditoria_completa SOLO si pide "
+        "'todo/completo/auditalo entero'. NO te adelantes a fases que no te "
+        "pidieron.\n"
+        "3. NARRA CADA AVANCE, como un operador humano al lado: antes de actuar di "
+        "en UNA linea que vas a hacer y por que; ejecuta la herramienta (su avance "
+        "se muestra en vivo); al terminar reporta el resultado de ESE paso; y "
+        "ESPERA la siguiente orden.\n"
+        "4. RAZONA como pentester sobre los resultados: relaciona servicio/version "
         "con el riesgo y CVEs probables (p.ej. SMB en Windows antiguo -> candidato "
         "a EternalBlue MS17-010; verificalo con buscar_vulnerabilidades). Descarta "
-        "ruido, prioriza por severidad e impacto real.\n"
-        "4. REPORTA con formato PROFESIONAL de pentester:\n"
+        "ruido, prioriza por severidad e impacto real. Sugiere el siguiente paso, "
+        "pero deja que el operador decida.\n"
+        "5. Al cerrar un paso o cuando te pidan 'resume/informe', REPORTA con "
+        "formato PROFESIONAL de pentester:\n"
         "   - RESUMEN EJECUTIVO (1-2 lineas): postura general y lo mas critico.\n"
         "   - HALLAZGOS ordenados por severidad (CRITICA/ALTA primero), cada uno: "
         "**severidad** equipo:puerto/servicio - que es y por que importa - tecnica "
@@ -511,28 +522,20 @@ def system_prompt(scope: Scope | None) -> str:
         "instalada o no devolvio nada, dilo tal cual.\n"
         "- NUNCA preguntes 'quien autoriza' ni pidas actas: el operador autoriza al "
         "pedirlo. Responde SIEMPRE en espanol.\n\n"
-        "INTERPRETA al operador y SE PROACTIVO (esto es lo que te hace inteligente):\n"
-        "- 'escanea mi ip'/'mi red'/'esta maquina' -> detectar_red_local; 'mi ip' "
-        "= la IP sola, 'mi red' = la subred /24.\n"
-        "- 'aqui'/'esto'/'donde estas'/'donde te deje'/'este entorno'/'sal de "
-        "aqui'/'encuentra la salida' -> el objetivo IMPLICITO es la red local: "
-        "detectar_red_local y AUDITALA, sin volver a preguntar.\n"
-        "- Si el operador quiere auditar o buscar vulnerabilidades pero NO da un "
-        "objetivo explicito, NO le vuelvas a preguntar: ASUME su red local "
-        "(detectar_red_local), avisa en UNA linea 'audito tu red local X' y "
-        "arranca la metodologia completa (auditoria_completa). Solo pregunta si "
-        "de plano no hay ninguna pista de que quiere.\n"
-        "- una IP o rango directo -> configurar_alcance y arranca. Si no dice "
-        "fases, asume recon+enum+vuln.\n"
-        "Prefiere SIEMPRE actuar a preguntar. Una sola pregunta como maximo, y "
-        "solo si es imprescindible.\n\n")
+        "INTERPRETA el objetivo sin fastidiar con preguntas:\n"
+        "- 'escanea mi ip'/'mi red'/'esta maquina'/'aqui'/'esto'/'donde estas'/"
+        "'sal de aqui' -> el objetivo es la red local: llama detectar_red_local "
+        "('mi ip' = la IP sola, 'mi red'/'aqui' = la subred /24) y fijala con "
+        "configurar_alcance. NO vuelvas a preguntar el objetivo.\n"
+        "- una IP o rango directo -> configurar_alcance con eso.\n"
+        "- Una vez fijado el objetivo, haz SOLO la accion que te pidio (un paso), "
+        "salvo que diga 'todo/completo'. Si dio objetivo pero no accion, propon el "
+        "siguiente paso y espera su OK.\n\n")
     if scope is None:
         return base + (
-            "ESTADO: aun no hay objetivo. Si el operador ya expreso que quiere "
-            "auditar/buscar vulnerabilidades, NO preguntes de nuevo: detecta su "
-            "red local con detectar_red_local, fijala con configurar_alcance y "
-            "PONTE EN MARCHA con auditoria_completa. Solo pide un objetivo si no "
-            "hay absolutamente ninguna pista.")
+            "ESTADO: aun no hay objetivo. Fijalo con configurar_alcance en cuanto "
+            "sepas a que apuntar (detectar_red_local si dijo 'aqui'/'mi red'). "
+            "Luego ejecuta SOLO lo que te pida, paso a paso.")
     s = scope.summary()
     return base + (
         f"ESTADO: objetivo ya fijado -> '{s['engagement']}', objetivos "
