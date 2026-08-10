@@ -26,7 +26,7 @@ from pathlib import Path
 
 from sentinel.core.monitor import Finding, Severity
 from sentinel.core.auditor.scope import Scope, ScopeError, build_scope
-from sentinel.core.auditor import recon, enum, vuln, exploit, toolkit
+from sentinel.core.auditor import recon, enum, vuln, exploit, toolkit, adversary
 from sentinel.core.auditor.targets import derive_targets, is_web, is_tls, is_smb
 from sentinel.core import llm, notify
 
@@ -40,6 +40,7 @@ class AuditorSession:
     findings: list[Finding] = field(default_factory=list)
     targets: dict[str, list[dict]] = field(default_factory=dict)
     progress: object = None          # callable(str): 'avance tras avance' en vivo
+    full_power: bool = False         # modo ofensivo: explotacion pre-autorizada
 
     def say(self, msg: str) -> None:
         """Emite una linea de avance a la terminal, si hay a donde."""
@@ -167,6 +168,21 @@ TOOL_SPECS = [
        "auditoria. Es entrega de informe/notificacion, no exfiltracion. Usalo si "
        "el operador pide 'avisame'/'mandame al correo'/'notificame'.",
        {"asunto": {"type": "string", "description": "Asunto (opcional)."}}),
+    _t("tecnicas_adversario",
+       "Lista el catalogo de tecnicas de emulacion de adversario (post-explotacion "
+       "y evasion) mapeadas a MITRE ATT&CK, para saber que se puede ejercitar."),
+    _t("emular_adversario",
+       "Ejecuta una CAMPAÑA de emulacion de adversario contra un equipo autorizado "
+       "(requiere fase 'exploit'): explota y encadena tecnicas ATT&CK reconocidas "
+       "(descubrimiento, credenciales, escalada, evasion/inyeccion/borrado de "
+       "rastros, persistencia, lateral) para MEDIR que detiene el defensivo. Si no "
+       "das 'tecnicas', corre la campaña completa. Usa modulos estandar de "
+       "Metasploit; no crea malware.",
+       {"ip": {"type": "string", "description": "Objetivo (en alcance)."},
+        "tecnicas": {"type": "array", "items": {"type": "string"},
+                     "description": "IDs de tecnica (ver tecnicas_adversario). "
+                                    "Omitir = campaña completa."}},
+       ["ip"]),
     _t("arsenal",
        "Lista que herramientas de Kali estan instaladas y cuales faltan."),
 ]
@@ -189,6 +205,10 @@ def _dispatch(session: AuditorSession, name: str, args: dict) -> dict:
         inst = [t.name for t in toolkit.ARSENAL if t.installed()]
         falta = [t.name for t in toolkit.ARSENAL if not t.installed()]
         return {"instaladas": inst, "faltan": falta}
+
+    if name == "tecnicas_adversario":
+        return {"tecnicas": adversary.catalogo(),
+                "campana_completa": list(adversary.CAMPANA_COMPLETA)}
 
     if name == "detectar_red_local":
         return _detectar_red_local()
@@ -289,10 +309,62 @@ def _dispatch(session: AuditorSession, name: str, args: dict) -> dict:
     if name == "explotar":
         return _explotar(session, args)
 
+    if name == "emular_adversario":
+        return _emular_adversario(session, args)
+
     if name == "avisar_por_correo":
         return _avisar(session, args)
 
     return {"error": f"herramienta desconocida: {name}"}
+
+
+def _emular_adversario(session: AuditorSession, args: dict) -> dict:
+    """Explota y encadena tecnicas ATT&CK reconocidas para medir la deteccion."""
+    scope = session.scope
+    ip = str(args.get("ip", "")).strip()
+    if not scope.phase_allowed("exploit"):
+        return {"error": "el alcance NO autoriza la fase 'exploit'."}
+    if not exploit.msf_available():
+        return {"error": "Metasploit (msfconsole) no esta instalado. "
+                         "En Kali: sudo apt install metasploit-framework."}
+    err = _ensure_host(session, ip)
+    if err:
+        return {"error": err}
+
+    # Elegir un modulo de explotacion por el servicio del equipo.
+    modulo, puerto = "", None
+    for e in session.targets.get(ip, []):
+        expl = [m for m in exploit.suggest_modules(e["svc"], e.get("banner", ""))
+                if m.startswith("exploit/")]
+        if expl:
+            modulo, puerto = expl[0], e["port"]
+            break
+    if not modulo:
+        return {"error": f"no tengo modulo de explotacion sugerido para {ip}. "
+                         f"Enumera/busca_vulnerabilidades primero, o usa 'explotar' "
+                         f"con un modulo concreto."}
+
+    tecnicas = args.get("tecnicas") or None
+    cmds, mapa = adversary.comandos(tecnicas)
+    session.say(f"  [adversario] {ip}: {modulo} + {len(mapa)} tecnica(s) ATT&CK...")
+    for t in mapa:
+        session.say(f"      · [{t['attack']}] {t['nombre']}")
+    try:
+        hallazgo, salida = exploit.run_msf(scope, modulo, ip, rport=puerto,
+                                           extra_post=cmds, timeout=900)
+    except ScopeError as e:
+        return {"error": str(e)}
+    if hallazgo:
+        session.add_findings([hallazgo])
+    entro = bool(hallazgo and hallazgo.severity >= Severity.CRITICAL)
+    session.say(f"      resultado: {'SESION ABIERTA' if entro else 'sin sesion'}")
+    return {
+        "equipo": ip, "modulo": modulo, "entro": entro,
+        "tecnicas_att&ck": mapa,
+        "scorecard": ("Ejecutadas estas tecnicas ATT&CK. Ahora revisa en SENTINEL "
+                      "azul cuales detecto/paro (por marca de tiempo): esa es la "
+                      "tabla antes/despues de tu tesis."),
+        "salida_msf": (salida or "")[:1800]}
 
 
 def _explotar(session: AuditorSession, args: dict) -> dict:
@@ -406,6 +478,11 @@ def _configurar_alcance(session: AuditorSession, args: dict) -> dict:
     en la sesion. El operador ya autoriza al pedirlo: no se le pregunta, pero
     queda un registro JSON (cadena de custodia)."""
     operador = (session.scope.operator if session.scope else None) or "operador"
+    fases = args.get("allowed_phases") or ["recon", "enum", "vuln"]
+    # Modo ofensivo (lanzado con --full): la explotacion queda pre-autorizada,
+    # sin que el operador tenga que decir "autorizo" en cada sesion.
+    if session.full_power and "exploit" not in fases:
+        fases = list(fases) + ["exploit"]
     data = {
         "engagement": (args.get("engagement") or "Auditoria (definida en sesion)"),
         "authorized_by": (args.get("authorized_by") or "").strip()
@@ -414,7 +491,7 @@ def _configurar_alcance(session: AuditorSession, args: dict) -> dict:
         "operator": operador,
         "targets": args.get("targets") or [],
         "excludes": args.get("excludes") or [],
-        "allowed_phases": args.get("allowed_phases") or ["recon", "enum", "vuln"],
+        "allowed_phases": fases,
     }
     horas = args.get("horas_ventana")
     if horas:
@@ -580,7 +657,7 @@ def _guardar_json(session: AuditorSession, fases: list[str]) -> Path:
 
 # ── Cerebro conversacional ────────────────────────────────────────────────────
 
-def system_prompt(scope: Scope | None) -> str:
+def system_prompt(scope: Scope | None, full_power: bool = False) -> str:
     base = (
         "Eres SENTINEL Rojo: un PENTESTER EXPERTO y AUTONOMO (NO un chatbot) que "
         "audita el laboratorio de una tesis de ciberseguridad. Actuas como un "
@@ -593,9 +670,13 @@ def system_prompt(scope: Scope | None) -> str:
         "un paso por vez. 'escanea/reconoce el .5' -> escanear_equipo; 'enumera "
         "el .5' -> enumerar; 'busca vulns en el .10' -> buscar_vulnerabilidades; "
         "'reconoce la red' -> reconocer; 'explota/entra/consigue shell en el .5' -> "
-        "explotar (requiere fase 'exploit' autorizada); 'avisame/mandame al correo' "
-        "-> avisar_por_correo. Corre auditoria_completa SOLO si pide 'todo/"
-        "completo/auditalo entero'. NO te adelantes a fases que no te pidieron.\n"
+        "explotar; 'emula un adversario/lanza la campaña/ataque completo con "
+        "evasion en el .5' -> emular_adversario (encadena tecnicas ATT&CK para "
+        "medir la deteccion del defensivo); 'que tecnicas tienes' -> "
+        "tecnicas_adversario; 'avisame/mandame al correo' -> avisar_por_correo. "
+        "explotar y emular_adversario requieren fase 'exploit' autorizada. Corre "
+        "auditoria_completa SOLO si pide 'todo/completo/auditalo entero'. NO te "
+        "adelantes a fases que no te pidieron.\n"
         "3. NARRA CADA AVANCE, como un operador humano al lado: antes de actuar di "
         "en UNA linea que vas a hacer y por que; ejecuta la herramienta (su avance "
         "se muestra en vivo); al terminar reporta el resultado de ESE paso; y "
@@ -645,6 +726,14 @@ def system_prompt(scope: Scope | None) -> str:
         "- Una vez fijado el objetivo, haz SOLO la accion que te pidio (un paso), "
         "salvo que diga 'todo/completo'. Si dio objetivo pero no accion, propon el "
         "siguiente paso y espera su OK.\n\n")
+    if full_power:
+        base += (
+            "MODO OFENSIVO ACTIVO: la explotacion YA esta autorizada para esta "
+            "sesion. NUNCA pidas autorizacion para explotar ni digas 'necesito que "
+            "autorices'. Si el operador ordena 'explota'/'entra'/'consigue shell'/"
+            "'saca las credenciales'/'sube privilegios', hazlo directo con explotar "
+            "(que ya trae post-explotacion completa). Sigues limitado a los "
+            "objetivos EN ALCANCE: eso no se negocia.\n\n")
     if scope is None:
         return base + (
             "ESTADO: aun no hay objetivo. Fijalo con configurar_alcance en cuanto "
@@ -678,14 +767,15 @@ def _extract_tool_calls(msg: dict) -> list[dict]:
 
 
 def run_chat(scope: Scope | None, api_key: str, model: str = llm.DEFAULT_MODEL,
-             out_dir: str = "evidencia_ofensiva",
+             out_dir: str = "evidencia_ofensiva", full_power: bool = False,
              input_fn=input, print_fn=print) -> int:
     """Bucle de conversacion en la terminal. `scope` puede ser None: en ese caso
     SENTINEL Rojo pregunta al operador que auditar y a quien, y arma el alcance
-    con configurar_alcance. `input_fn`/`print_fn` se inyectan para pruebas."""
-    session = AuditorSession(scope=scope, out_dir=out_dir)
+    con configurar_alcance. `full_power` (modo ofensivo, --full) pre-autoriza la
+    explotacion. `input_fn`/`print_fn` se inyectan para pruebas."""
+    session = AuditorSession(scope=scope, out_dir=out_dir, full_power=full_power)
     session.progress = print_fn        # 'avance tras avance' en vivo
-    messages = [{"role": "system", "content": system_prompt(scope)}]
+    messages = [{"role": "system", "content": system_prompt(scope, full_power)}]
 
     print_fn("")
     print_fn("  SENTINEL Rojo — asistente de auditoria. Hablame en español.")

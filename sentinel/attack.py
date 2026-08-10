@@ -267,7 +267,8 @@ def _resolver_llm() -> tuple[str, str]:
     return key, modelo
 
 
-def cmd_chat(scope_path: str | None, out_dir: str, modelo_cli: str | None) -> int:
+def cmd_chat(scope_path: str | None, out_dir: str, modelo_cli: str | None,
+             full: bool = False) -> int:
     from sentinel.core.auditor import agent
     scope = None
     if scope_path:
@@ -288,13 +289,17 @@ def cmd_chat(scope_path: str | None, out_dir: str, modelo_cli: str | None) -> in
         print("  O ponla en config/settings.json -> ai.openrouter_api_key")
         print()
         return 4
-    _head("SENTINEL Rojo" + (f" — {scope.engagement}" if scope else ""))
+    _head("SENTINEL Rojo" + (" [OFENSIVO]" if full else "")
+          + (f" — {scope.engagement}" if scope else ""))
     if scope is not None:
         _print_scope(scope)
     else:
         print("  Sin alcance previo: SENTINEL Rojo te preguntara qué auditar y a quién.")
         print(f"  {_LINE}")
-    return agent.run_chat(scope, key, modelo, out_dir=out_dir)
+    if full:
+        print("  MODO OFENSIVO: la explotacion queda autorizada para esta sesion.")
+        print(f"  {_LINE}")
+    return agent.run_chat(scope, key, modelo, out_dir=out_dir, full_power=full)
 
 
 def _safe(acc: list[Finding], etiqueta: str, fn) -> None:
@@ -418,6 +423,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--modelo", metavar="MODELO",
                     help="Modelo del cerebro en OpenRouter (ej. "
                          "google/gemini-2.5-flash, anthropic/claude-3.5-sonnet).")
+    ap.add_argument("--full", action="store_true",
+                    help="Modo OFENSIVO: pre-autoriza la explotacion en esta "
+                         "sesion (no hay que decir 'autorizo'). Sigue limitado al "
+                         "alcance. Solo con --chat.")
     ap.add_argument("--exploit-scripts", dest="exploit_scripts",
                     action="store_true",
                     help="Si el alcance autoriza 'exploit', PREPARA scripts .rc de "
@@ -431,7 +440,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.arsenal:
         return cmd_arsenal()
     if args.chat:
-        return cmd_chat(args.scope, out_dir=args.salida, modelo_cli=args.modelo)
+        return cmd_chat(args.scope, out_dir=args.salida, modelo_cli=args.modelo,
+                        full=args.full)
     if args.verificar:
         return cmd_verificar(args.scope)
     if args.scope:
