@@ -40,8 +40,10 @@ from sentinel.core import llm, notify
 _MAX_OUTPUT = 8000
 # Iteraciones maximas del bucle autonomo (cada una puede invocar varias tools).
 _MAX_ITERATIONS = 100
-# max_tokens para el LLM en modo autonomo (necesita espacio para razonar).
-_AUTONOMOUS_MAX_TOKENS = 4096
+# max_tokens para el LLM — empieza conservador para no quemar creditos.
+_AUTONOMOUS_MAX_TOKENS = 2048
+# Modelo de fallback gratuito cuando los creditos se agotan.
+_FALLBACK_MODEL = "deepseek/deepseek-chat-v3-0324"
 
 
 # ── Estado de la operacion autonoma ──────────────────────────────────────────
@@ -593,42 +595,69 @@ def run_autonomous(mission: str, scope: Scope | None, api_key: str,
     reporte_final = ""
     exito = False
     fin = False
+    current_max_tokens = _AUTONOMOUS_MAX_TOKENS
+    current_model = model
+    consecutive_errors = 0
 
     for iteracion in range(1, _MAX_ITERATIONS + 1):
         if fin:
             break
 
+        # ── Trim de contexto: si hay demasiados mensajes, podar ──
+        if len(messages) > 60:
+            # Mantener system prompt + ultimos 40 mensajes.
+            messages = messages[:1] + messages[-40:]
+            print_fn("  [contexto] Podando historial para ahorrar tokens.")
+
         resp = llm.complete_resilient(
-            messages, all_tools, api_key, model,
-            max_tokens=_AUTONOMOUS_MAX_TOKENS, temperature=0.3)
+            messages, all_tools, api_key, current_model,
+            max_tokens=current_max_tokens, temperature=0.3)
 
         if "error" in resp:
-            print_fn(f"  [cerebro] ERROR: {resp['error']}")
-            run.log("error_llm", resp["error"])
-            # Reintentar una vez despues de una pausa.
-            time.sleep(5)
-            resp = llm.complete_resilient(
-                messages, all_tools, api_key, model,
-                max_tokens=_AUTONOMOUS_MAX_TOKENS, temperature=0.3)
-            if "error" in resp:
-                print_fn(f"  [cerebro] ERROR persistente. Abortando.")
-                run.log("abort", resp["error"])
+            err = resp.get("error", "")
+            print_fn(f"  [cerebro] ERROR: {str(err)[:200]}")
+            run.log("error_llm", str(err)[:500])
+            consecutive_errors += 1
+
+            # ── Retry inteligente por creditos (402) ──
+            if "402" in str(err) or "credits" in str(err).lower():
+                if current_max_tokens > 512:
+                    current_max_tokens = max(512, current_max_tokens // 2)
+                    print_fn(f"  [creditos] Reduciendo tokens a {current_max_tokens}")
+                    time.sleep(2)
+                    continue
+                if current_model != _FALLBACK_MODEL:
+                    current_model = _FALLBACK_MODEL
+                    current_max_tokens = 2048
+                    print_fn(f"  [creditos] Cambiando a modelo gratuito: {_FALLBACK_MODEL}")
+                    time.sleep(2)
+                    continue
+
+            # Retry generico (errores de red, rate limit, etc.)
+            if consecutive_errors < 3:
+                time.sleep(5 * consecutive_errors)
+                continue
+            else:
+                print_fn(f"  [cerebro] {consecutive_errors} errores seguidos. "
+                         "Generando reporte de emergencia.")
+                run.log("abort", str(err)[:500])
+                reporte_final = _generar_reporte_emergencia(run)
                 break
+
+        consecutive_errors = 0  # Reset en llamada exitosa.
 
         msg = resp["message"]
         messages.append(msg)
         calls = chat_agent._extract_tool_calls(msg)
 
         if not calls:
-            # El LLM respondio sin pedir herramientas — puede ser un avance
-            # narrativo o que se estanco. Le pedimos que siga.
             contenido = msg.get("content") or ""
             if contenido:
                 print_fn(f"\n  SENTINEL> {contenido[:500]}")
                 if len(contenido) > 500:
                     print_fn(f"            (...{len(contenido)} chars)")
                 print_fn("")
-            # Inyectar un empujon agresivo para que no se detenga.
+            # Inyectar empujon agresivo.
             nudge = (
                 "NO pares. Llevas " + str(run.comandos_ejecutados) +
                 " comandos ejecutados. ")
@@ -636,13 +665,13 @@ def run_autonomous(mission: str, scope: Scope | None, api_key: str,
                 nudge += ("Aun no has hecho reconocimiento profundo. Usa "
                           "ejecutar_comando con nmap -sV -sC -A contra los "
                           "equipos de la red. GO.")
-            elif run.comandos_ejecutados < 10:
+            elif run.comandos_ejecutados < 15:
                 nudge += ("Ya reconociste pero NO has explotado nada. Busca "
                           "vulnerabilidades con nmap --script vuln y searchsploit. "
-                          "Intenta explotar con msfconsole. GO.")
+                          "Intenta explotar con msfconsole o hydra. GO.")
             else:
-                nudge += ("Si ya terminaste todas las fases, usa mision_cumplida. "
-                          "Si no, sigue con la siguiente fase.")
+                nudge += ("Si ya terminaste todas las fases, usa mision_cumplida "
+                          "con un reporte DETALLADO. Si no, sigue.")
             messages.append({"role": "user", "content": nudge})
             continue
 
@@ -666,19 +695,18 @@ def run_autonomous(mission: str, scope: Scope | None, api_key: str,
                     reporte_final = resultado.get("reporte", "")
                     break
                 else:
-                    # La guardia rechazo: inyectar empujon fuerte.
                     messages.append({"role": "user",
                                      "content": (
                         "RECHAZADO. No has trabajado lo suficiente. "
                         "Llevas solo " + str(run.comandos_ejecutados) +
-                        " comandos. Te faltan fases por completar: "
-                        "reconocimiento profundo, enumeracion de servicios, "
-                        "busqueda de vulnerabilidades, EXPLOTACION. "
-                        "NO te rindas. Ejecuta la siguiente fase de tu plan. "
-                        "Usa ejecutar_comando para escanear, enumerar y "
-                        "explotar los equipos de la red. GO.")})
+                        " comandos. Te faltan fases por completar. "
+                        "NO te rindas. Ejecuta la siguiente fase. GO.")})
 
     # ── Cierre ────────────────────────────────────────────────────────────────
+
+    # Si no hay reporte (ej: se acabo el bucle sin mision_cumplida), generar uno.
+    if not reporte_final and run.comandos_ejecutados > 0:
+        reporte_final = _generar_reporte_emergencia(run)
 
     duracion = datetime.now().isoformat(timespec="seconds")
     print_fn("")
@@ -712,6 +740,44 @@ def run_autonomous(mission: str, scope: Scope | None, api_key: str,
             "hallazgos": len(session.findings),
             "evidencia": str(evidencia),
             "bitacora": run.bitacora}
+
+
+# ── Reporte de emergencia (cuando el LLM muere) ─────────────────────────────
+
+def _generar_reporte_emergencia(run: AutonomousRun) -> str:
+    """Genera un reporte estructurado a partir de la bitacora cuando el LLM
+    no pudo terminar por si mismo (creditos, errores de red, etc.)."""
+    lineas = [
+        "REPORTE DE EMERGENCIA (generado automaticamente)",
+        f"Mision: {run.mission}",
+        f"Comandos ejecutados: {run.comandos_ejecutados}",
+        f"Hallazgos: {len(run.session.findings)}",
+        "",
+        "PLAN:",
+        run.plan or "(sin plan registrado)",
+        "",
+        "COMANDOS EJECUTADOS:",
+    ]
+    for entry in run.bitacora:
+        if entry.get("tipo") == "comando":
+            lineas.append(f"  $ {entry.get('detalle', '')[:200]}")
+        elif entry.get("tipo") == "resultado":
+            lineas.append(f"    -> exit={entry.get('detalle', '')}")
+        elif entry.get("tipo") == "progreso":
+            fase = entry.get("fase", "")
+            lineas.append(f"  [{fase}] {entry.get('detalle', '')[:200]}")
+
+    if run.session.findings:
+        lineas.append("")
+        lineas.append("HALLAZGOS:")
+        for f in run.session.findings:
+            lineas.append(f"  [{f.severity.label}] {f.title} ({f.target})")
+
+    lineas.append("")
+    lineas.append("NOTA: El LLM se quedo sin creditos o tuvo errores de red "
+                  "antes de completar la mision. Este reporte fue generado "
+                  "automaticamente a partir de la bitacora de la operacion.")
+    return "\n".join(lineas)
 
 
 # ── Guardar evidencia ────────────────────────────────────────────────────────
