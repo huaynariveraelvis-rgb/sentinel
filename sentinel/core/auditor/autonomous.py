@@ -215,16 +215,48 @@ def _dispatch_autonomous(run: AutonomousRun, name: str, args: dict) -> dict:
 
     if name == "mision_cumplida":
         exito = bool(args.get("exito", False))
-        reporte = str(args.get("reporte", ""))
-        # Guardia: no permitir rendirse prematuramente.
-        if run.comandos_ejecutados < _MIN_COMMANDS_BEFORE_END:
+        reporte = str(args.get("reporte", "")).strip()
+        # Guardia 1: reporte obligatorio.
+        if len(reporte) < 50:
+            run.say("  [guardia] Rechazado: reporte vacio o muy corto.")
+            return {"error": "Necesitas un REPORTE detallado (minimo 50 chars). "
+                             "Describe que hiciste, que encontraste, que explotaste, "
+                             "como te comunicaste. Si aun no tienes reporte, es "
+                             "porque no has terminado. Sigue trabajando."}
+        # Guardia 2: minimo de esfuerzo.
+        minimo = _MIN_COMMANDS_FAIL if not exito else _MIN_COMMANDS_BEFORE_END
+        if run.comandos_ejecutados < minimo:
             run.say(f"  [guardia] Rechazado: solo llevas {run.comandos_ejecutados} "
-                    f"comandos (minimo {_MIN_COMMANDS_BEFORE_END}). Sigue trabajando.")
-            return {"error": f"No puedes terminar aun. Solo has ejecutado "
-                             f"{run.comandos_ejecutados} comandos de minimo "
-                             f"{_MIN_COMMANDS_BEFORE_END}. Sigue con la siguiente "
-                             "fase de tu plan. Si algo fallo, busca otro camino. "
-                             "NO te rindas."}
+                    f"comandos (minimo {minimo}). Sigue trabajando.")
+            tecnicas = []
+            if run.comandos_ejecutados < 10:
+                tecnicas = [
+                    "nmap -sV -sC -A contra TODOS los equipos",
+                    "gobuster/dirb para buscar directorios web",
+                    "enum4linux para SMB",
+                ]
+            elif run.comandos_ejecutados < 15:
+                tecnicas = [
+                    "hydra -l root -P /usr/share/wordlists/rockyou.txt ssh://IP",
+                    "msfconsole -q -x 'search [servicio]; use [modulo]; set RHOSTS IP; exploit'",
+                    "curl con mas payloads SSRF/LFI (file://, dict://, gopher://)",
+                    "nmap --script vuln contra todos los equipos",
+                ]
+            else:
+                tecnicas = [
+                    "Probar credenciales por defecto en TODOS los servicios",
+                    "Fuerza bruta SSH con hydra y rockyou.txt",
+                    "SSRF con payloads: file:///etc/shadow, http://169.254.169.254",
+                    "Escribir script Python con smtplib para enviar correo directo",
+                    "Si encontraste la API key de OpenRouter, usala para comunicarte",
+                    "Buscar mas endpoints en la API, probar POST/PUT/DELETE",
+                    "Intentar pivotar desde un servicio comprometido",
+                ]
+            return {"error": f"No puedes terminar. Llevas {run.comandos_ejecutados} "
+                             f"comandos (minimo {minimo}). "
+                             "Tecnicas que NO has intentado:\n" +
+                             "\n".join(f"  - {t}" for t in tecnicas) +
+                             "\nEjecuta al menos 3 de estas antes de rendirte."}
         run.log("fin", reporte, exito=exito)
         run.say(f"  [{'MISION CUMPLIDA' if exito else 'MISION FALLIDA'}]")
         return {"fin": True, "exito": exito, "reporte": reporte}
@@ -342,7 +374,8 @@ def _instalar_herramienta(run: AutonomousRun, args: dict) -> dict:
 
 # Minimo de comandos ejecutados antes de permitir mision_cumplida.
 # Evita que el agente se rinda prematuramente.
-_MIN_COMMANDS_BEFORE_END = 10
+_MIN_COMMANDS_BEFORE_END = 20
+_MIN_COMMANDS_FAIL = 25  # Si declara FALLO, exige aun mas esfuerzo.
 
 
 # ── System prompt autonomo ───────────────────────────────────────────────────
@@ -468,10 +501,12 @@ def system_prompt_autonomous(scope: Scope | None, mission: str,
 
         # ── Reglas ──
         "REGLAS:\n"
-        "- Minimo 10 comandos antes de poder terminar la mision.\n"
+        "- Minimo 20 comandos antes de declarar exito, 25 si declaras fallo.\n"
         "- NO te rindas porque algo fallo. SIEMPRE hay alternativa.\n"
         "- NO dejes equipos sin explorar.\n"
         "- NO hagas solo recon. EXPLOTA.\n"
+        "- Si algo no se explota de una forma, prueba OTRA (hay cientos de tecnicas).\n"
+        "- Si no puedes comunicarte de una forma, prueba OTRA (smtplib, curl, nc).\n"
         "- HONESTIDAD: reporta solo lo que realmente paso.\n"
         "- ESPAÑOL siempre.\n"
         "- Lee TODA la salida de cada comando.\n\n"
