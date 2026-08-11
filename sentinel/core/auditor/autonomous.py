@@ -593,10 +593,22 @@ def run_autonomous(mission: str, scope: Scope | None, api_key: str,
                 if len(contenido) > 500:
                     print_fn(f"            (...{len(contenido)} chars)")
                 print_fn("")
-            # Inyectar un empujon para que no se detenga.
-            messages.append({"role": "user",
-                             "content": "Sigue. Ejecuta el siguiente paso de tu "
-                                        "plan. Si ya terminaste, usa mision_cumplida."})
+            # Inyectar un empujon agresivo para que no se detenga.
+            nudge = (
+                "NO pares. Llevas " + str(run.comandos_ejecutados) +
+                " comandos ejecutados. ")
+            if run.comandos_ejecutados < 5:
+                nudge += ("Aun no has hecho reconocimiento profundo. Usa "
+                          "ejecutar_comando con nmap -sV -sC -A contra los "
+                          "equipos de la red. GO.")
+            elif run.comandos_ejecutados < 10:
+                nudge += ("Ya reconociste pero NO has explotado nada. Busca "
+                          "vulnerabilidades con nmap --script vuln y searchsploit. "
+                          "Intenta explotar con msfconsole. GO.")
+            else:
+                nudge += ("Si ya terminaste todas las fases, usa mision_cumplida. "
+                          "Si no, sigue con la siguiente fase.")
+            messages.append({"role": "user", "content": nudge})
             continue
 
         for c in calls:
@@ -611,12 +623,25 @@ def run_autonomous(mission: str, scope: Scope | None, api_key: str,
                              "name": nombre,
                              "content": json.dumps(resultado, ensure_ascii=False)})
 
-            # Detectar fin de mision.
+            # Detectar fin de mision (SOLO si el guardia lo permitio).
             if nombre == "mision_cumplida":
-                fin = True
-                exito = resultado.get("exito", False)
-                reporte_final = resultado.get("reporte", "")
-                break
+                if resultado.get("fin"):
+                    fin = True
+                    exito = resultado.get("exito", False)
+                    reporte_final = resultado.get("reporte", "")
+                    break
+                else:
+                    # La guardia rechazo: inyectar empujon fuerte.
+                    messages.append({"role": "user",
+                                     "content": (
+                        "RECHAZADO. No has trabajado lo suficiente. "
+                        "Llevas solo " + str(run.comandos_ejecutados) +
+                        " comandos. Te faltan fases por completar: "
+                        "reconocimiento profundo, enumeracion de servicios, "
+                        "busqueda de vulnerabilidades, EXPLOTACION. "
+                        "NO te rindas. Ejecuta la siguiente fase de tu plan. "
+                        "Usa ejecutar_comando para escanear, enumerar y "
+                        "explotar los equipos de la red. GO.")})
 
     # ── Cierre ────────────────────────────────────────────────────────────────
 
